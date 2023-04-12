@@ -31,10 +31,11 @@ auto TcpListener::Bind(SocketAddr const& addr) -> StdResult<TcpListener>
   io::Init();
   if (auto socket = CreateSocket(addr, SOCK_STREAM); socket) {
 #ifndef WIN_PLATFORM
-    ::setsockopt(socket->raw(), SOL_SOCKET, SO_REUSEADDR, 1);
+    int reuse = 1;
+    ::setsockopt(socket->raw(), SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&reuse), sizeof(reuse));
 #endif
     sockaddr_storage storage;
-    int len;
+    socklen_t len;
     if (auto r = SocketAddrToSockAddr(addr, &storage, &len); !r) {
       return make_unexpected(r.error());
     } else {
@@ -57,7 +58,7 @@ auto TcpListener::accept(SocketAddr* addr) -> StdResult<TcpStream>
 {
   if (addr != nullptr) {
     sockaddr_storage storage;
-    int len = sizeof(storage);
+    socklen_t len = sizeof(storage);
     if (auto r = io::SocketAddrToSockAddr(*addr, &storage, &len); !r) {
       return make_unexpected(r.error());
     }

@@ -5,7 +5,7 @@
 
 int main(int argc, char* argv[])
 {
-  auto listener = io::TcpListener::Bind(io::SocketAddrV4 {io::LOCAL_HOST, 8080});
+  auto listener = io::TcpListener::Bind(io::SocketAddrV4 {io::ANY, 2333});
   if (!listener) {
     return 1;
   }

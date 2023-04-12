@@ -4,6 +4,9 @@ project(io)
 
 set(CMAKE_CXX_STANDARD 20)
 
+set(CMAKE_CXX_COMPILER "clang++-15")
+set(CMAKE_C_COMPILER "clang-15")
+
 file(GLOB SOURCES 
       "lib/*.cpp" 
       "lib/net/*.cpp" 
@@ -19,6 +22,7 @@ target_include_directories(io
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/utils      
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
 )
+
 if(WIN32)
     target_link_libraries(io ws2_32)
 endif()
