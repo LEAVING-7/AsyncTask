@@ -25,3 +25,21 @@ endif()
 
 add_executable(draft draft/draft.cpp)
 target_link_libraries(draft io)
+
+enable_testing()
+
+include(FetchContent)
+
+macro(AddExternal target url git_tag)
+  FetchContent_Declare(
+    ${target}
+    GIT_REPOSITORY https://ghproxy.com/https://github.com/${url}
+    GIT_TAG ${git_tag}
+  )
+  FetchContent_MakeAvailable(${target})
+endmacro()
+
+AddExternal(gtest; google/googletest; v1.13.0)
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+
+add_subdirectory(tests)
