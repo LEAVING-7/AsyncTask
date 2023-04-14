@@ -1,30 +1,24 @@
 #pragma once
 #include "platform.hpp"
-#ifdef WIN_PLATFORM
-  #include <cassert>
-  #include <mutex>
-  #include <winsock2.h>
-
+#ifdef UNIX_PLATFORM
   #include "io/net/SocketAddr.hpp"
-  #include "predefined.hpp"
+  #include <arpa/inet.h>
+  #include <chrono>
+  #include <sys/types.h>
 
 namespace io {
-using sa_family = ADDRESS_FAMILY;
-using addrinfo = ADDRINFOA;
-using sockaddr = SOCKADDR;
-using sockaddr_storage = SOCKADDR_STORAGE_LH;
-using socklen_t = int;
+using sa_family = sa_family_t;
+using addrinfo = struct addrinfo;
+using sockaddr = sockaddr;
+using sockaddr_storage = sockaddr_storage;
+using socklen_t = socklen_t;
 
-static std::once_flag gWinSockInitFlag;
-
-auto Init() -> void;
-auto CleanUp() -> void;
+inline auto Init() -> void {};
 auto LastError() -> std::error_code;
 
-// manual close
 class Socket {
 public:
-  Socket(SOCKET handle);
+  Socket(int handle);
   Socket(Socket&& other);
 
   auto accept(sockaddr* storage, socklen_t len) -> StdResult<Socket>;
@@ -41,13 +35,14 @@ public:
   auto nodelay() -> StdResult<bool>;
 
   auto close() -> StdResult<void>;
-  auto raw() const -> SOCKET;
+  auto raw() const -> int;
 
 private:
-  SOCKET mHandle = INVALID_SOCKET;
+  int mFd = -1;
 };
 
 auto CreateSocket(SocketAddr const& addr, int ty) -> StdResult<Socket>;
-auto SocketAddrToSockAddr(SocketAddr const& addr, sockaddr_storage* storage, int* len) -> StdResult<void>;
+auto SocketAddrToSockAddr(SocketAddr const& addr, sockaddr_storage* storage, socklen_t* len) -> StdResult<void>;
 } // namespace io
+
 #endif

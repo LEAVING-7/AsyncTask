@@ -1,40 +1,22 @@
-#include "io/sys/win/Socket.hpp"
+#include "io/sys/unix/Socket.hpp"
+#ifdef UNIX_PLATFORM
+  #include <fcntl.h>
+  #include <netinet/tcp.h>
+  #include <sys/socket.h>
+  #include <unistd.h>
 
-#ifdef WIN_PLATFORM
 namespace io {
-auto Init() -> void
-{
-  std::call_once(gWinSockInitFlag, []() {
-    WSADATA wsaData;
-    auto result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    assert(result == 0);
-  });
-}
-auto CleanUp() -> void { WSACleanup(); }
-auto LastError() -> std::error_code { return std::error_code {WSAGetLastError(), std::system_category()}; }
-
+auto LastError() -> std::error_code { return std::error_code(errno, std::system_category()); }
 auto CreateSocket(SocketAddr const& addr, int ty) -> StdResult<Socket>
 {
   auto family = addr.isIpv4() ? AF_INET : AF_INET6;
-  auto rawSocket = WSASocketW(family, ty, 0, nullptr, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
-  if (rawSocket != INVALID_SOCKET) {
+  auto rawSocket = socket(family, ty, 0);
+  if (rawSocket != -1) {
     return Socket {rawSocket};
   } else {
-    auto wsaError = WSAGetLastError();
-    if (wsaError != WSAEPROTOTYPE && wsaError != WSAEINVAL) {
-      return make_unexpected(LastError());
-    }
-
-    auto rawSocket = WSASocketW(family, ty, 0, nullptr, 0, WSA_FLAG_OVERLAPPED);
-
-    if (rawSocket != INVALID_SOCKET) {
-      return Socket {rawSocket};
-    } else {
-      return make_unexpected(LastError());
-    }
+    return make_unexpected(LastError());
   }
 }
-
 auto SocketAddrToSockAddr(SocketAddr const& addr, sockaddr_storage* storage, socklen_t* len) -> StdResult<void>
 {
   if (addr.isIpv4()) {
@@ -59,44 +41,37 @@ auto SocketAddrToSockAddr(SocketAddr const& addr, sockaddr_storage* storage, soc
     return make_unexpected(std::make_error_code(std::errc::address_family_not_supported));
   }
 }
-
-  #define RE(expr)                                                                                                     \
-    if (auto res = (expr); !res.has_value()) {                                                                         \
-      return res;                                                                                                      \
-    }
-Socket::Socket(SOCKET handle) : mHandle(handle) {}
-Socket::Socket(Socket&& other) : mHandle(other.mHandle) { other.mHandle = INVALID_SOCKET; }
-
-auto Socket::raw() const -> SOCKET { return mHandle; }
-
-auto Socket::accept(sockaddr* storage, int len) -> StdResult<Socket>
+Socket::Socket(int rawSocket) : mFd(rawSocket) {}
+Socket::Socket(Socket&& other) : mFd(other.mFd) { other.mFd = -1; }
+auto Socket::raw() const -> int { return mFd; }
+auto Socket::accept(sockaddr* storage, socklen_t len) -> StdResult<Socket>
 {
-  auto rawSocket = ::accept(mHandle, storage, &len);
-  if (rawSocket != INVALID_SOCKET) {
+  auto rawSocket = ::accept(mFd, storage, &len);
+  if (rawSocket != -1) {
     return Socket {rawSocket};
   } else {
     return make_unexpected(LastError());
   }
 }
-
 auto Socket::connect(SocketAddr const& addr) -> StdResult<void>
 {
   sockaddr_storage storage;
-  int len;
-  RE(SocketAddrToSockAddr(addr, &storage, &len));
-  auto res = ::connect(mHandle, reinterpret_cast<sockaddr*>(&storage), len);
+  socklen_t len;
+  if (auto r = SocketAddrToSockAddr(addr, &storage, &len); !r) {
+    return make_unexpected(r.error());
+  };
+  auto res = ::connect(mFd, reinterpret_cast<sockaddr*>(&storage), len);
   if (res == 0) {
     return {};
   } else {
     return make_unexpected(LastError());
   }
 }
-
 auto Socket::close() -> StdResult<void>
 {
-  if (mHandle != INVALID_SOCKET) {
-    auto ret = ::closesocket(mHandle);
-    mHandle = INVALID_SOCKET;
+  if (mFd != -1) {
+    auto ret = ::close(mFd);
+    mFd = -1;
     if (ret == 0) {
       return {};
     } else {
@@ -105,10 +80,9 @@ auto Socket::close() -> StdResult<void>
   }
   return {};
 }
-
 auto Socket::recv(void* buf, size_t len, int flag) -> StdResult<size_t>
 {
-  auto result = ::recv(mHandle, reinterpret_cast<char*>(buf), len, flag);
+  auto result = ::recv(mFd, reinterpret_cast<char*>(buf), len, flag);
   if (result >= 0) {
     return result;
   } else {
@@ -118,9 +92,9 @@ auto Socket::recv(void* buf, size_t len, int flag) -> StdResult<size_t>
 auto Socket::recvfrom(void* buf, size_t len, int flag) -> StdResult<size_t>
 {
   sockaddr_storage storage;
-  int storageLen = sizeof(storage);
+  socklen_t storageLen = sizeof(storage);
   auto result =
-      ::recvfrom(mHandle, reinterpret_cast<char*>(buf), len, flag, reinterpret_cast<sockaddr*>(&storage), &storageLen);
+      ::recvfrom(mFd, reinterpret_cast<char*>(buf), len, flag, reinterpret_cast<sockaddr*>(&storage), &storageLen);
   if (result >= 0) {
     return result;
   } else {
@@ -128,9 +102,18 @@ auto Socket::recvfrom(void* buf, size_t len, int flag) -> StdResult<size_t>
   }
 }
 auto Socket::read(void* buf, size_t len) -> StdResult<size_t> { return recv(buf, len, 0); }
-auto Socket::setNonBlocking(bool nonBlocking) -> StdResult<void>
+auto Socket::setNonBlocking(bool enable) -> StdResult<void>
 {
-  auto result = ::ioctlsocket(mHandle, FIONBIO, reinterpret_cast<u_long*>(&nonBlocking));
+  auto flags = ::fcntl(mFd, F_GETFL, 0);
+  if (flags == -1) {
+    return make_unexpected(LastError());
+  }
+  if (enable) {
+    flags |= O_NONBLOCK;
+  } else {
+    flags &= ~O_NONBLOCK;
+  }
+  auto result = ::fcntl(mFd, F_SETFL, flags);
   if (result == 0) {
     return {};
   } else {
@@ -142,7 +125,7 @@ auto Socket::setLinger(bool enable, int timeout) -> StdResult<void>
   struct linger l;
   l.l_onoff = enable ? 1 : 0;
   l.l_linger = timeout;
-  auto result = ::setsockopt(mHandle, SOL_SOCKET, SO_LINGER, reinterpret_cast<char*>(&l), sizeof(l));
+  auto result = ::setsockopt(mFd, SOL_SOCKET, SO_LINGER, reinterpret_cast<char*>(&l), sizeof(l));
   if (result == 0) {
     return {};
   } else {
@@ -152,8 +135,8 @@ auto Socket::setLinger(bool enable, int timeout) -> StdResult<void>
 auto Socket::linger() -> StdResult<Optional<std::chrono::seconds>>
 {
   struct linger l;
-  int len = sizeof(l);
-  auto result = ::getsockopt(mHandle, SOL_SOCKET, SO_LINGER, reinterpret_cast<char*>(&l), &len);
+  socklen_t len = sizeof(l);
+  auto result = ::getsockopt(mFd, SOL_SOCKET, SO_LINGER, reinterpret_cast<char*>(&l), &len);
   if (result == 0) {
     if (l.l_onoff) {
       return std::chrono::seconds {l.l_linger};
@@ -166,7 +149,8 @@ auto Socket::linger() -> StdResult<Optional<std::chrono::seconds>>
 }
 auto Socket::setNoDelay(bool enable) -> StdResult<void>
 {
-  auto result = ::setsockopt(mHandle, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&enable), sizeof(enable));
+  int enableInt = enable ? 1 : 0;
+  auto result = ::setsockopt(mFd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&enableInt), sizeof(enableInt));
   if (result == 0) {
     return {};
   } else {
@@ -176,8 +160,8 @@ auto Socket::setNoDelay(bool enable) -> StdResult<void>
 auto Socket::nodelay() -> StdResult<bool>
 {
   int enable;
-  int len = sizeof(enable);
-  auto result = ::getsockopt(mHandle, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&enable), &len);
+  socklen_t len = sizeof(enable);
+  auto result = ::getsockopt(mFd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&enable), &len);
   if (result == 0) {
     return enable != 0;
   } else {
@@ -185,6 +169,5 @@ auto Socket::nodelay() -> StdResult<bool>
   }
 }
 
-  #undef RE
 } // namespace io
 #endif

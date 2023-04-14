@@ -16,16 +16,21 @@ struct Foo {
 
 int main(int argc, char* argv[])
 {
-  std::variant<int, long> v = 123;
-  std::cout << v.index() << '\n';
-  // assert(slab.isEmpty());
-  // auto hello = slab.insert(123);
-  // assert(slab[hello].v == 123);
-  // assert(slab.get(hello)->v == 123);
-  // assert(!slab.isEmpty());
-  // assert(slab.contains(key));
-  // auto v = slab.tryRemove(hello);
-  // assert(v.has_value());
-  // assert(v->v == 123);
+  auto listener = io::TcpListener::Bind(io::SocketAddrV4 {io::ANY, 2333});
+  if (!listener) {
+    return 1;
+  }
+  auto stream = listener->accept(nullptr);
+  if (!stream) {
+    return 1;
+  }
+  char buf[1024];
+  auto result = stream->read(buf, 1024);
+  if (!result) {
+    return 1;
+  }
+  buf[1023] = '\0';
+  printf("%s", buf);
+
   return 0;
 }

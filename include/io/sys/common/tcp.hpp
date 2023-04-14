@@ -4,11 +4,11 @@
 #if defined(WIN_PLATFORM)
   #include "io/sys/win/Socket.hpp"
 #elif defined(UNIX_PLATFORM)
-  #include "io/sys/linux/Socket.hpp"
+  #include "io/sys/unix/Socket.hpp"
 #endif
 
 namespace io {
-inline auto SetSockopt(Socket& socket, int level, int optname, void const* optval, int optlen) -> StdResult<void>
+inline auto SetSockopt(Socket& socket, int level, int optname, void const* optval, socklen_t optlen) -> StdResult<void>
 {
   auto result = ::setsockopt(socket.raw(), level, optname, static_cast<char const*>(optval), optlen);
   if (result == 0) {
@@ -18,7 +18,7 @@ inline auto SetSockopt(Socket& socket, int level, int optname, void const* optva
   }
 }
 
-inline auto GetSockopt(Socket& socket, int level, int optname, void* optval, int* optlen) -> StdResult<void>
+inline auto GetSockopt(Socket& socket, int level, int optname, void* optval, socklen_t* optlen) -> StdResult<void>
 {
   auto result = ::getsockopt(socket.raw(), level, optname, static_cast<char*>(optval), optlen);
   if (result == 0) {
