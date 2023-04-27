@@ -1,0 +1,1 @@
+cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=1 CMAKE_CXX_COMPILER="\usr\bin\clang++-15"  -DCMAKE_BUILD_TYPE=Debug -S . -B build -G Ninja

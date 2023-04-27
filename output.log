@@ -1,0 +1,10 @@
+[2023-04-26 23:21:04.156] [info] i: 233
+[2023-04-26 23:21:04.156] [info] Poller created: epoll_fd=3, event_fd=4, timer_fd=5
+[2023-04-26 23:21:04.156] [info] Poller destroyed: epoll_fd=-1, event_fd=-1, timer_fd=-1
+[2023-04-26 23:21:04.156] [info] Poller destroyed: epoll_fd=-1, event_fd=-1, timer_fd=-1
+[2023-04-26 23:21:04.157] [info] timerfd_settime: timerfd: 5, it_interval=0.0, it_value=0.0
+Task() 0x609000000000
+[2023-04-26 23:21:04.157] [info] epoll_wait: epoll_fd=3, events.len=1024, timeout=-1
+Task() 0x606000000000
+Task() 0x61100000ff00
+[2023-04-26 23:21:04.157] [warning] reg task with idx: 0, fd: 6

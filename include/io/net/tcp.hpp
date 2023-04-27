@@ -6,6 +6,7 @@
 #elif defined(UNIX_PLATFORM)
   #include "io/sys/unix/Socket.hpp"
 #endif
+#include "log.hpp"
 
 namespace io {
 inline auto SetSockopt(Socket& socket, int level, int optname, void const* optval, socklen_t optlen) -> StdResult<void>
@@ -30,10 +31,22 @@ inline auto GetSockopt(Socket& socket, int level, int optname, void* optval, soc
 
 class TcpStream {
 public:
+  TcpStream() = default;
   TcpStream(Socket&& socket) : mSocket(std::move(socket)) {}
   TcpStream(TcpStream const&) = delete;
   TcpStream(TcpStream&& other) noexcept : mSocket(std::move(other.mSocket)) {}
-  ~TcpStream() { mSocket.close(); }
+  TcpStream& operator=(TcpStream const&) = delete;
+  TcpStream& operator=(TcpStream&& other) noexcept
+  {
+    mSocket = std::move(other.mSocket);
+    return *this;
+  };
+
+  ~TcpStream()
+  {
+    LOG_INFO("TcpStream closed: {}", mSocket.raw());
+    mSocket.close();
+  }
   static auto Connect(SocketAddr const& addr) -> StdResult<TcpStream>;
 
   auto read(void* buf, size_t len) -> StdResult<size_t> { return mSocket.read(buf, len); }
@@ -45,7 +58,8 @@ public:
   auto setNoDelay(bool enable) -> StdResult<void> { return mSocket.setNoDelay(enable); }
   auto nodelay() -> StdResult<bool> { return mSocket.nodelay(); }
 
-  auto socket() -> Socket& { return mSocket; }
+  auto socket() const& -> Socket const& { return mSocket; }
+  auto socket() && -> Socket&& { return std::move(mSocket); }
 
 private:
   Socket mSocket;
@@ -57,16 +71,18 @@ public:
   TcpListener(TcpListener const&) = delete;
   TcpListener(TcpListener&& other) noexcept : mSocket(std::move(other.mSocket)) {}
   ~TcpListener() { mSocket.close(); }
+
   static auto Bind(SocketAddr const& addr) -> StdResult<TcpListener>;
-  auto accept(SocketAddr* addr) -> StdResult<TcpStream>;
+  auto accept(SocketAddr* addr = nullptr) -> StdResult<TcpStream>;
 
   auto setNonBlocking(bool nonBlocking) -> StdResult<void> { return mSocket.setNonBlocking(nonBlocking); }
   auto setLinger(bool enable, int timeout) -> StdResult<void> { return mSocket.setLinger(enable, timeout); }
-  auto linger() -> StdResult<Optional<std::chrono::seconds>> { return mSocket.linger(); }
+  auto linger() const -> StdResult<Optional<std::chrono::seconds>> { return mSocket.linger(); }
   auto setNoDelay(bool enable) -> StdResult<void> { return mSocket.setNoDelay(enable); }
-  auto nodelay() -> StdResult<bool> { return mSocket.nodelay(); }
+  auto nodelay() const -> StdResult<bool> { return mSocket.nodelay(); }
 
-  auto socket() -> Socket& { return mSocket; }
+  auto socket() const& -> Socket const& { return mSocket; }
+  auto socket() && -> Socket&& { return std::move(mSocket); }
 
 private:
   Socket mSocket;

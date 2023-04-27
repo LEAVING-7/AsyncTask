@@ -43,6 +43,13 @@ auto SocketAddrToSockAddr(SocketAddr const& addr, sockaddr_storage* storage, soc
 }
 Socket::Socket(int rawSocket) : mFd(rawSocket) {}
 Socket::Socket(Socket&& other) : mFd(other.mFd) { other.mFd = -1; }
+Socket& Socket::operator=(Socket&& other)
+{
+  mFd = other.mFd;
+  other.mFd = -1;
+  return *this;
+}
+auto Socket::valid() const -> bool { return mFd != -1; }
 auto Socket::raw() const -> int { return mFd; }
 auto Socket::accept(sockaddr* storage, socklen_t len) -> StdResult<Socket>
 {
@@ -102,6 +109,31 @@ auto Socket::recvfrom(void* buf, size_t len, int flag) -> StdResult<size_t>
   }
 }
 auto Socket::read(void* buf, size_t len) -> StdResult<size_t> { return recv(buf, len, 0); }
+
+auto Socket::send(void const* buf, size_t len, int flag) -> StdResult<size_t>
+{
+  auto result = ::send(mFd, reinterpret_cast<char const*>(buf), len, flag);
+  if (result >= 0) {
+    return result;
+  } else {
+    return make_unexpected(LastError());
+  }
+}
+auto Socket::sendto(void const* buf, size_t len, SocketAddr const& addr, int flag) -> StdResult<size_t>
+{
+  sockaddr_storage storage;
+  socklen_t storageLen;
+  if (auto r = SocketAddrToSockAddr(addr, &storage, &storageLen); !r) {
+    return make_unexpected(r.error());
+  };
+  auto result =
+      ::sendto(mFd, reinterpret_cast<char const*>(buf), len, flag, reinterpret_cast<sockaddr*>(&storage), storageLen);
+  if (result >= 0) {
+    return result;
+  } else {
+    return make_unexpected(LastError());
+  }
+}
 auto Socket::setNonBlocking(bool enable) -> StdResult<void>
 {
   auto flags = ::fcntl(mFd, F_GETFL, 0);
@@ -132,7 +164,7 @@ auto Socket::setLinger(bool enable, int timeout) -> StdResult<void>
     return make_unexpected(LastError());
   }
 }
-auto Socket::linger() -> StdResult<Optional<std::chrono::seconds>>
+auto Socket::linger() const -> StdResult<Optional<std::chrono::seconds>>
 {
   struct linger l;
   socklen_t len = sizeof(l);
@@ -157,7 +189,7 @@ auto Socket::setNoDelay(bool enable) -> StdResult<void>
     return make_unexpected(LastError());
   }
 }
-auto Socket::nodelay() -> StdResult<bool>
+auto Socket::nodelay() const -> StdResult<bool>
 {
   int enable;
   socklen_t len = sizeof(enable);

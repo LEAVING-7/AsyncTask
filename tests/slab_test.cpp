@@ -74,3 +74,11 @@ TEST(SlabTest, GetVacantEntry)
   auto key = slab.vacantEntry().key;
   ASSERT_EQ(key, slab.vacantEntry().key);
 }
+
+TEST(SlabTest, InsertRemoveEntry)
+{
+  auto slab = Slab<int> {};
+  auto idx = slab.insert(123);
+  auto v = slab.tryRemove(idx);
+  ASSERT_EQ(v.value(), 123);
+}

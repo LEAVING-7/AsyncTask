@@ -1,36 +1,53 @@
 #include <mutex>
 
-#include "io/Slab.hpp"
-#include "io/net/SocketAddr.hpp"
-#include "io/sys/common/tcp.hpp"
+// #include "io/Slab.hpp"
+// #include "io/net/SocketAddr.hpp"
+// #include "io/sys/common/tcp.hpp"
 #include <iostream>
 
-struct Foo {
-  Foo() { puts("default ctor"); }
-  Foo(int in_v) : v(in_v) { puts("foo ctor"); }
-  Foo(Foo const&) { puts("foo copy ctor"); }
-  Foo(Foo&&) { puts("foo mv ctor"); };
-  ~Foo() { puts("dtor"); }
-  int v;
-};
+#include <inttypes.h>
+#include <stdlib.h>
+#include <sys/timerfd.h>
+#include <unistd.h>
+#include <iostream>
+
+#define handle_error(msg)                                                                                              \
+  do {                                                                                                                 \
+    perror(msg);                                                                                                       \
+    exit(EXIT_FAILURE);                                                                                                \
+  } while (0)
 
 int main(int argc, char* argv[])
 {
-  auto listener = io::TcpListener::Bind(io::SocketAddrV4 {io::ANY, 2333});
-  if (!listener) {
-    return 1;
-  }
-  auto stream = listener->accept(nullptr);
-  if (!stream) {
-    return 1;
-  }
-  char buf[1024];
-  auto result = stream->read(buf, 1024);
-  if (!result) {
-    return 1;
-  }
-  buf[1023] = '\0';
-  printf("%s", buf);
+  struct itimerspec ts;
+  struct timespec start, now;
+  int maxExp, fd, secs, nanosecs;
+  std::uint64_t numExp, totalExp;
+  ssize_t s;
 
-  return 0;
+  fd = timerfd_create(CLOCK_REALTIME, 0);
+  if (fd == -1) {
+    handle_error("timerfd_create");
+  }
+  ts = itimerspec {
+      .it_interval =
+          {
+              .tv_sec = 4, // 4s
+              .tv_nsec = 0,
+          },
+      .it_value =
+          {
+              .tv_sec = 4, // 4s
+              .tv_nsec = 0,
+          },
+  };
+  auto r = timerfd_settime(fd, 0, &ts, NULL);
+  if (r == -1) {
+    handle_error("timerfd_settime");
+  }
+  r = clock_gettime(fd, &start);
+  if (r == -1) {
+    handle_error("clock_gettime");
+  }
+  std::cout << start.tv_sec << ' ' << start.tv_nsec << std::endl;
 }

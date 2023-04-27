@@ -1,4 +1,4 @@
-#include "io/sys/common/tcp.hpp"
+#include "io/net/tcp.hpp"
 
 namespace io {
 auto TcpStream::Connect(SocketAddr const& addr) -> StdResult<TcpStream>
@@ -16,15 +16,7 @@ auto TcpStream::Connect(SocketAddr const& addr) -> StdResult<TcpStream>
   return TcpStream {std::move(*socket)};
 }
 
-auto TcpStream::write(void const* buf, size_t len) -> StdResult<size_t>
-{
-  auto result = ::send(mSocket.raw(), static_cast<char const*>(buf), len, 0);
-  if (result >= 0) {
-    return result;
-  } else {
-    return make_unexpected(LastError());
-  }
-}
+auto TcpStream::write(void const* buf, size_t len) -> StdResult<size_t> { return mSocket.send(buf, len, 0); }
 
 auto TcpListener::Bind(SocketAddr const& addr) -> StdResult<TcpListener>
 {

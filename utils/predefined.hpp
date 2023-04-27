@@ -32,3 +32,15 @@ using tl::make_unexpected;
 #include <optional>
 template <typename T>
 using Optional = std::optional<T>;
+
+#include <system_error>
+template <typename Fn, typename... Args>
+auto SysCall(Fn fn, Args... args) -> StdResult<std::invoke_result_t<Fn, Args...>>
+{
+  auto result = std::invoke(fn, args...);
+  if (result == -1) {
+    return make_unexpected(std::error_code(errno, std::system_category()));
+  } else {
+    return result;
+  }
+}
