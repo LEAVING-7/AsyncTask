@@ -1,7 +1,0 @@
-digraph "Task state" {
-  Ready -> Running
-  Invalid
-  Running -> Done
-  Running -> Ready
-  Done -> Invalid
-}

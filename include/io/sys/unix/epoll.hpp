@@ -13,8 +13,9 @@ enum class PollMode;
 namespace impl {
 struct Events {
   static constexpr auto MAX_EVENTS = 1024;
-  std::unique_ptr<struct epoll_event> data;
+  std::unique_ptr<struct epoll_event[]> data;
   size_t len;
+
   Events() : data(new struct epoll_event[MAX_EVENTS]), len(MAX_EVENTS) {}
 
   struct Iterator {
@@ -82,5 +83,4 @@ public:
 };
 } // namespace impl
 } // namespace io
-
 #endif

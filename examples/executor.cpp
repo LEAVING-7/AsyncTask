@@ -2,7 +2,7 @@
 #include "io/async/Task.hpp"
 #include "io/async/tcp.hpp"
 
-int main()
+int main1()
 {
   auto i = new int[1];
   i[0] = 233;
@@ -33,7 +33,8 @@ int main()
         auto recvBuf = std::array<u8, 1024> {};
         auto rlen = co_await stream.read(recvBuf.data(), recvBuf.size());
         if (rlen) {
-          // LOG_INFO("recv: {}", std::string_view {reinterpret_cast<char*>(recvBuf.data()), rlen.value()});
+        } else {
+          co_return;
         }
         auto len = co_await stream.write(buf, std::size(buf));
         // LOG_INFO("after read");
@@ -50,12 +51,12 @@ int main()
   }());
 }
 
-int main1()
+int main()
 {
   auto executor = io::Executor {};
   auto i = executor.blockOn([]() -> Task<int> {
     LOG_INFO("hello world");
-    // std::this_thread::sleep_for(5s);
+    std::this_thread::sleep_for(5s);
     co_return 233;
   }());
   LOG_INFO("i: {}", i);

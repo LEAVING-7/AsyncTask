@@ -11,7 +11,7 @@ struct ReadableAwaiter {
     auto r = e.regReadableTask(fd, handle);
     if (!r) {
       LOG_INFO("reg readable failed: {}", r.error().message());
-    } 
+    }
   }
   void await_resume() noexcept
   {
@@ -120,13 +120,13 @@ auto TcpListener::accept(SocketAddr* addr) -> Task<StdResult<TcpStream>>
     }
     co_return TcpStream {mExecutor, Socket {accept4r}};
   } else {
-    auto accept4r = ::accept(mSocket.raw(), nullptr, nullptr);
+    auto accept4r = ::accept4(mSocket.raw(), nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (accept4r == -1) {
       if (io::LastError() == std::errc::resource_unavailable_try_again ||
           io::LastError() == std::errc::operation_would_block) {
         co_await ReadableAwaiter {*mExecutor, mSocket.raw()};
-        accept4r = ::accept(mSocket.raw(), nullptr, nullptr);
-        if(accept4r == -1) {
+        accept4r = ::accept4(mSocket.raw(), nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if (accept4r == -1) {
           LOG_INFO("accept4r: {}", strerror(errno));
         }
         assert(accept4r != -1);

@@ -45,94 +45,8 @@ private:
   Slab<Item> mSlab;
 };
 
-class Executor;
-template <typename T>
-struct BlockOnCleanUp {
-  struct promise_type;
-  using coroutine_handle_type = std::coroutine_handle<promise_type>;
-
-  struct FinalAwaiter {
-    Executor* e {nullptr};
-    FinalAwaiter(Executor* e) : e(e) {}
-    auto await_ready() noexcept -> bool { return false; }
-    auto await_resume() noexcept -> void {}
-    auto await_suspend(std::coroutine_handle<promise_type> handle) noexcept -> void;
-  };
-
-  struct promise_type {
-    std::exception_ptr exceptionPtr;
-    Executor* e {nullptr};
-    T value;
-
-    auto get_return_object() -> BlockOnCleanUp { return BlockOnCleanUp {coroutine_handle_type::from_promise(*this)}; }
-    auto initial_suspend() noexcept -> std::suspend_always { return {}; }
-    auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter(e); }
-    auto return_value(std::pair<Executor*, T>&& pair) -> void
-    {
-      e = pair.first;
-      value = std::forward<T>(pair.second);
-    }
-    auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
-  };
-  explicit BlockOnCleanUp(coroutine_handle_type handle) : coHandle(handle) {}
-  coroutine_handle_type coHandle {nullptr};
-};
-
-template <>
-struct BlockOnCleanUp<void> {
-  struct promise_type;
-  using coroutine_handle_type = std::coroutine_handle<promise_type>;
-
-  struct FinalAwaiter {
-    Executor* e {nullptr};
-    FinalAwaiter(Executor* e) : e(e) {}
-    auto await_ready() noexcept -> bool { return false; }
-    auto await_resume() noexcept -> void {}
-    auto await_suspend(std::coroutine_handle<promise_type> handle) noexcept -> void;
-  };
-
-  struct promise_type {
-    std::exception_ptr exceptionPtr;
-    Executor* e {nullptr};
-    auto get_return_object() -> BlockOnCleanUp { return BlockOnCleanUp {coroutine_handle_type::from_promise(*this)}; }
-    auto initial_suspend() noexcept -> std::suspend_always { return {}; }
-    auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter(e); }
-    auto return_value(Executor* in) -> void { e = in; }
-    auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
-  };
-  explicit BlockOnCleanUp(coroutine_handle_type handle) : coHandle(handle) {}
-  coroutine_handle_type coHandle {nullptr};
-};
-
-struct SpawnCleanUp {
-  struct promise_type;
-  using coroutine_handle_type = std::coroutine_handle<promise_type>;
-  struct FinalAwaiter {
-    Executor* e {nullptr};
-    FinalAwaiter(Executor* e) : e(e) {}
-    auto await_ready() noexcept -> bool { return false; }
-    auto await_resume() noexcept -> void {}
-    auto await_suspend(std::coroutine_handle<promise_type> handle) noexcept -> void;
-  };
-  struct promise_type {
-    std::exception_ptr exceptionPtr;
-    Executor* e {nullptr};
-    auto get_return_object() -> SpawnCleanUp { return SpawnCleanUp {coroutine_handle_type::from_promise(*this)}; }
-    auto initial_suspend() noexcept -> std::suspend_always { return {}; }
-    auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter(e); }
-    auto return_value(Executor* in) -> void { e = in; }
-    auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
-  };
-  explicit SpawnCleanUp(coroutine_handle_type handle) : coHandle(handle) {}
-  coroutine_handle_type coHandle {nullptr};
-};
-
 class Executor {
 public:
-  friend struct BlockOnCleanUp<void>;
-  template <typename T>
-  friend struct BlockOnCleanUp;
-  friend struct SpawnCleanUp;
   Executor() : mEventThread(), mThreadPool()
   {
     mEventThread = std::jthread([this](std::stop_token tok) { eventLoop(*this, tok); });
@@ -147,12 +61,13 @@ public:
   auto spawn(Task<> task) -> void
   {
     mSpawnedTaskCount += 1;
-    auto spawnTask = [](Task<> task, Executor* e) -> SpawnCleanUp {
+    int a = 233;
+    auto afterDone = [this]() -> void { mSpawnedTaskCount -= 1; };
+    auto spawnTask = [](Task<> task, std::function<void()> fn) -> CleanTask<void> {
       co_await task;
-      co_return e;
-    }(std::move(task), this);
+      co_return std::move(fn);
+    }(std::move(task), std::move(afterDone));
     auto handle = spawnTask.coHandle;
-    // LOG_INFO("spawn task 1: {}", handle.address());
     mThreadPool.push_task([handle, this]() mutable { handle.resume(); });
   }
 
@@ -161,35 +76,56 @@ public:
   {
     mBlockOnReturnValue.store(nullptr);
     mBlockOnDone.store(false);
-    auto blockOnTask = [](Task<T> task, Executor* e) -> BlockOnCleanUp<T> {
-      if constexpr (std::is_void_v<T>) {
+
+    auto promise = std::promise<T> {};
+    auto future = promise.get_future();
+
+    auto handle = std::coroutine_handle<> {nullptr};
+    if constexpr (!std::is_void_v<T>) {
+      auto afterDone = [this](T&& value) {
+        mBlockOnReturnValue = new T {std::move(value)};
+        mBlockOnReturnValue.notify_one();
+        mBlockOnDone.exchange(true);
+        mBlockOnDone.notify_one();
+        return;
+      };
+      auto blockOnTask = [](Task<T> task, std::function<void(T &&)> fn) -> CleanTask<T> {
+        co_return {std::move(fn), co_await task};
+      }(std::move(task), std::move(afterDone));
+      handle = blockOnTask.coHandle;
+    } else {
+      auto afterDone = [this]() {
+        mBlockOnReturnValue = (void*)1;
+        mBlockOnReturnValue.notify_one();
+        mBlockOnDone.exchange(true);
+        mBlockOnDone.notify_one();
+        return;
+      };
+      auto blockOnTask = [](Task<T> task, std::function<void()> fn) -> CleanTask<T> {
         co_await task;
-        co_return e;
-      } else {
-        auto result = co_await task;
-        co_return {e, std::move(result)};
-      }
-    }(std::move(task), this);
-    mThreadPool.push_task([handle = blockOnTask.coHandle] { handle.resume(); });
+        co_return std::move(fn);
+      }(std::move(task), std::move(afterDone));
+      handle = blockOnTask.coHandle;
+    }
 
+    mThreadPool.push_task(handle);
     LOG_INFO("Before wait");
-
     mBlockOnDone.wait(false);
     LOG_INFO("After wait, with tasks: {}", mThreadPool.task_total());
-    // while (mBlockOnReturnValue != 0) {
     mBlockOnReturnValue.wait(nullptr);
-    // }
     mThreadPool.wait_for_tasks();
     while (mSpawnedTaskCount != mSpawnedTaskDoneCount) {
-      // LOG_INFO("After wait, with tasks: {}", mThreadPool.task_total());
       LOG_INFO("wait for tasks: {}/{}", mSpawnedTaskDoneCount, mSpawnedTaskCount);
     }
+
+    future.wait();
+
     if constexpr (std::is_void_v<T>) {
       assert(mBlockOnReturnValue == (void*)(1));
       return;
     } else {
       auto ptr = reinterpret_cast<T*>(mBlockOnReturnValue.load());
-      auto result = std::move(*ptr);
+      T result = std::move(*ptr);
       delete ptr;
       return result;
     }
@@ -214,7 +150,6 @@ public:
         return make_unexpected(r.error());
       }
     };
-    // LOG_WARN("reg task with idx: {}, fd: {}", idx, fd);
     return {};
   }
   auto regReadableTask(int fd, std::coroutine_handle<> task) -> StdResult<void>
@@ -248,6 +183,11 @@ private:
     while (!token.stop_requested()) {
       events.clear();
       auto len = exe.mPoller.wait(events, std::nullopt);
+      if (len.has_value()) {
+        // LOG_INFO("poller wait {} events", len.value());
+      } else {
+        LOG_ERROR("poller wait error: {}", len.error().message());
+      }
       for (auto& e : events) {
         if (e.key == NOTIFY_KEY) {
           LOG_INFO("notify event");
@@ -273,39 +213,6 @@ private:
 
   Poller mPoller;
   thread_pool_light mThreadPool {8};
-  // EventSlab mEventSlab;
   std::jthread mEventThread;
 };
-
-template <typename T>
-auto BlockOnCleanUp<T>::FinalAwaiter::await_suspend(std::coroutine_handle<promise_type> handle) noexcept -> void
-{
-  assert(handle.done());
-  assert(e);
-  e->mBlockOnReturnValue = new T {std::move(handle.promise().value)};
-  LOG_INFO("set block on return value");
-  e->mBlockOnDone.exchange(true);
-  e->mBlockOnDone.notify_one();
-  LOG_INFO("notify block on done");
-  handle.destroy();
-}
-inline auto BlockOnCleanUp<void>::FinalAwaiter::await_suspend(std::coroutine_handle<promise_type> handle) noexcept
-    -> void
-{
-  assert(handle.done());
-  assert(e);
-  e->mBlockOnReturnValue = (void*)(1);
-  LOG_INFO("set block on return value");
-  e->mBlockOnDone.exchange(true);
-  e->mBlockOnDone.notify_one();
-  LOG_INFO("notify block on done");
-  handle.destroy();
-}
-inline auto SpawnCleanUp::FinalAwaiter::await_suspend(std::coroutine_handle<promise_type> handle) noexcept -> void
-{
-  assert(handle.done());
-  e->mSpawnedTaskDoneCount += 1;
-  handle.destroy();
-  assert(e);
-}
 } // namespace io

@@ -3,6 +3,7 @@
 #include <coroutine>
 #include <cstdio>
 #include <exception>
+#include <functional>
 #include <utility>
 
 template <typename T = void>
@@ -149,8 +150,79 @@ inline auto Promise<T>::get_return_object() noexcept -> Task<T>
 {
   return Task<T> {std::coroutine_handle<Promise>::from_promise(*this)};
 }
-
 inline auto Promise<void>::get_return_object() noexcept -> Task<void>
 {
   return Task<void> {std::coroutine_handle<Promise>::from_promise(*this)};
 }
+
+template <typename T>
+struct CleanTask {
+  struct promise_type;
+  using coroutine_handle_type = std::coroutine_handle<promise_type>;
+
+  struct FinalAwaiter {
+    auto await_ready() noexcept -> bool { return false; }
+    auto await_resume() noexcept -> void {}
+    auto await_suspend(std::coroutine_handle<promise_type> handle) noexcept -> void
+    {
+      auto fn = std::move(handle.promise().afterCleanUpFn);
+      auto value = std::move(handle.promise().value);
+      assert(handle.done());
+      handle.destroy();
+      if (fn) {
+        fn(std::move(value));
+      }
+    }
+  };
+
+  struct promise_type {
+    std::exception_ptr exceptionPtr;
+    T value;
+
+    std::function<void(T&&)> afterCleanUpFn;
+    auto get_return_object() -> CleanTask { return CleanTask {coroutine_handle_type::from_promise(*this)}; }
+    auto initial_suspend() noexcept -> std::suspend_always { return {}; }
+    auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
+    auto return_value(std::pair<std::function<void(T&&)>, T>&& pair) -> void
+    {
+      afterCleanUpFn = std::move(pair.first);
+      value = std::forward<T>(pair.second);
+    }
+    auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
+  };
+  explicit CleanTask(coroutine_handle_type handle) : coHandle(handle) {}
+  coroutine_handle_type coHandle {nullptr};
+};
+
+template <>
+struct CleanTask<void> {
+  struct promise_type;
+  using coroutine_handle_type = std::coroutine_handle<promise_type>;
+
+  struct FinalAwaiter {
+    auto await_ready() noexcept -> bool { return false; }
+    auto await_resume() noexcept -> void {}
+    auto await_suspend(std::coroutine_handle<promise_type> handle) noexcept -> void
+    {
+      auto fn = std::move(handle.promise().afterCleanUpFn);
+      assert(handle.done());
+      handle.destroy();
+      if (fn) {
+        fn();
+      }
+    }
+  };
+
+  struct promise_type {
+    std::exception_ptr exceptionPtr;
+
+    std::function<void(void)> afterCleanUpFn;
+    auto get_return_object() -> CleanTask { return CleanTask {coroutine_handle_type::from_promise(*this)}; }
+    auto initial_suspend() noexcept -> std::suspend_always { return {}; }
+    auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
+    auto return_value(std::function<void(void)> fn) -> void { afterCleanUpFn = std::move(fn); }
+    auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
+  };
+  explicit CleanTask(coroutine_handle_type handle) : coHandle(handle) {}
+  coroutine_handle_type coHandle {nullptr};
+};

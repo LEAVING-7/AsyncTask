@@ -47,7 +47,7 @@ public:
   constexpr auto supportLevel() const -> bool { return mPoller.supportLevel(); }
 
   auto add(int fd, Event ev) -> StdResult<void> { return mPoller.add(fd, ev, PollMode::Oneshot); }
-  auto addWithMode(int fd, Event ev, PollMode mode) -> StdResult<void>
+  auto add(int fd, Event ev, PollMode mode) -> StdResult<void>
   {
     if (ev.key == NOTIFY_KEY) {
       return make_unexpected(std::make_error_code(std::errc::invalid_argument));
@@ -56,6 +56,14 @@ public:
     }
   }
   auto mod(int fd, Event ev) -> StdResult<void> { return mPoller.mod(fd, ev, PollMode::Oneshot); }
+  auto mod(int fd, Event ev, PollMode mode) -> StdResult<void>
+  {
+    if (ev.key == NOTIFY_KEY) {
+      return make_unexpected(std::make_error_code(std::errc::invalid_argument));
+    } else {
+      return mPoller.mod(fd, ev, mode);
+    }
+  }
   auto del(int fd) -> StdResult<void> { return mPoller.del(fd); }
 
   auto wait(std::vector<Event>& events, std::optional<std::chrono::milliseconds> timeout) -> StdResult<size_t>
