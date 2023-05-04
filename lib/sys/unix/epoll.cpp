@@ -101,24 +101,32 @@ auto Poller::del(int fd) -> StdResult<void>
   RE(SysCall(::epoll_ctl, mEpollFd, EPOLL_CTL_DEL, fd, nullptr));
   return {};
 }
-auto Poller::wait(Events& events, std::optional<std::chrono::milliseconds> timeout) -> StdResult<void>
+
+timespec ns_to_timespec(std::chrono::nanoseconds ns)
 {
-  auto timeoutMs = timeout.has_value() ? timeout.value().count() : -1;
+  timespec ts;
+  ts.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(ns).count();
+  ts.tv_nsec = (ns % std::chrono::seconds(1)).count();
+  return ts;
+}
+
+auto Poller::wait(Events& events, std::optional<std::chrono::nanoseconds> timeout) -> StdResult<void>
+{
   if (mTimerFd != -1) {
     auto newVal = itimerspec {
         .it_interval = {.tv_sec = 0, .tv_nsec = 0},
-        .it_value =
-            {
-                .tv_sec = timeout.has_value()
-                              ? std::chrono::duration_cast<std::chrono::seconds, long>(timeout.value()).count()
-                              : 0,
-                .tv_nsec = 0,
-            },
+        .it_value = ns_to_timespec(timeout.value()),
     };
     RE(SysCall(::timerfd_settime, mTimerFd, 0, &newVal, nullptr));
     RE(mod(mTimerFd, Event::Readable(io::NOTIFY_KEY), PollMode::Oneshot));
   }
 
+  int timeoutMs = -1;
+  if (timeout) {
+    if (mTimerFd == -1) {
+      timeoutMs = std::chrono::duration_cast<std::chrono::milliseconds>(timeout.value()).count();
+    }
+  }
   auto r = SysCall(::epoll_wait, mEpollFd, events.data.get(), Events::MAX_EVENTS, timeoutMs);
   if (!r) {
     return make_unexpected(r.error());

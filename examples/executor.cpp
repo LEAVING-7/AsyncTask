@@ -2,7 +2,7 @@
 #include "io/async/Task.hpp"
 #include "io/async/tcp.hpp"
 
-int main1()
+int main()
 {
   auto i = new int[1];
   i[0] = 233;
@@ -51,12 +51,17 @@ int main1()
   }());
 }
 
-int main()
+int main1()
 {
   auto executor = io::Executor {};
-  auto i = executor.blockOn([]() -> Task<int> {
+  auto i = executor.blockOn([&executor]() -> Task<int> {
     LOG_INFO("hello world");
-    std::this_thread::sleep_for(5s);
+    std::this_thread::sleep_for(1s);
+    executor.spawn([]() -> Task<> {
+      LOG_INFO("spawned task");
+      std::this_thread::sleep_for(3s);
+      co_return;
+    }());
     co_return 233;
   }());
   LOG_INFO("i: {}", i);

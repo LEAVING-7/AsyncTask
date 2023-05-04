@@ -2,47 +2,46 @@
 #include "platform.hpp"
 
 namespace io::async {
+
+#define IO_AWAITER_TEMPLATE(fn, awaiter)                                                                               \
+  auto r = fn;                                                                                                         \
+  if (!r &&                                                                                                            \
+      (r.error() == std::errc::resource_unavailable_try_again || r.error() == std::errc::operation_would_block)) {     \
+    co_await awaiter;                                                                                                  \
+    return fn;                                                                                                         \
+  } else {                                                                                                             \
+    return r;                                                                                                          \
+  }
+
 struct ReadableAwaiter {
-  io::Executor& e;
-  int fd;
-  bool await_ready() noexcept { return false; }
-  void await_suspend(std::coroutine_handle<> handle) noexcept
+  Reactor* reactor;
+  Source* source;
+
+  bool await_ready() const noexcept { return false; }
+  void await_suspend(std::coroutine_handle<> h) noexcept
   {
-    auto r = e.regReadableTask(fd, handle);
-    if (!r) {
-      LOG_INFO("reg readable failed: {}", r.error().message());
-    }
+    auto r = source->setReadable(h);
+    assert(r);
+    reactor->updateIo(*source);
   }
-  void await_resume() noexcept
-  {
-    // auto r = e.unregTask(key);
-    // if (!r) {
-    //   LOG_INFO("unreg task failed: {}", r.error().message());
-    // }
-  }
+  void await_resume() noexcept {}
 };
 
 struct WritableAwaiter {
-  io::Executor& e;
-  int fd;
-  bool await_ready() noexcept { return false; }
-  void await_suspend(std::coroutine_handle<> handle) noexcept
+  Reactor* reactor;
+  Source* source;
+
+  bool await_ready() const noexcept { return false; }
+  void await_suspend(std::coroutine_handle<> h) noexcept
   {
-    auto r = e.regWritableTask(fd, handle);
-    if (!r) {
-      LOG_INFO("reg readable failed: {}", r.error().message());
-    }
+    auto r = source->setWritable(h);
+    assert(r);
+    reactor->updateIo(*source);
   }
-  void await_resume() noexcept
-  {
-    // auto r = e.unregTask(key);
-    // if (!r) {
-    //   LOG_INFO("unreg task failed: {}", r.error().message());
-    // }
-  }
+  void await_resume() noexcept {}
 };
 
-auto TcpStream::Connect(io::Executor& e, SocketAddr const& addr) -> StdResult<TcpStream>
+auto TcpStream::Connect(io::Reactor& e, SocketAddr const& addr) -> StdResult<TcpStream>
 {
   auto socket = io::CreateSocket(addr, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC);
   // assert(socket);
@@ -57,27 +56,22 @@ auto TcpStream::Connect(io::Executor& e, SocketAddr const& addr) -> StdResult<Tc
 }
 auto TcpStream::read(void* buf, size_t len) -> Task<StdResult<size_t>>
 {
-  assert(mExecutor);
-  assert(mSocket.valid());
-  auto r = mSocket.recv(buf, len, MSG_DONTWAIT);
-  if (!r && r.error() == std::errc::resource_unavailable_try_again) {
-    co_await ReadableAwaiter {*mExecutor, mSocket.raw()};
-    r = mSocket.recv(buf, len, 0);
-    co_return std::move(r);
+  auto r = Socket(mSource->fd).recv(buf, len, MSG_DONTWAIT);
+  if (!r && (r.error() == std::errc::resource_unavailable_try_again || r.error() == std::errc::operation_would_block)) {
+    co_await ReadableAwaiter {mReactor, mSource.get()};
+    co_return Socket(mSource->fd).recv(buf, len, MSG_DONTWAIT);
   } else {
-    co_return std::move(r);
+    co_return r;
   }
 };
 auto TcpStream::write(void const* buf, size_t len) -> Task<StdResult<size_t>>
 {
-  assert(mExecutor);
-  auto r = mSocket.send(buf, len, MSG_DONTWAIT);
-  if (!r && r.error() == std::errc::resource_unavailable_try_again) {
-    co_await WritableAwaiter {*mExecutor, mSocket.raw()};
-    r = mSocket.send(buf, len, 0);
-    co_return std::move(r);
+  auto r = Socket(mSource->fd).send(buf, len, MSG_DONTWAIT);
+  if (!r && (r.error() == std::errc::resource_unavailable_try_again || r.error() == std::errc::operation_would_block)) {
+    co_await WritableAwaiter {mReactor, mSource.get()};
+    co_return Socket(mSource->fd).send(buf, len, MSG_DONTWAIT);
   } else {
-    co_return std::move(r);
+    co_return r;
   }
 }
 auto TcpListener::Bind(io::Executor& e, SocketAddr const& addr) -> StdResult<TcpListener>
@@ -106,36 +100,36 @@ auto TcpListener::Bind(io::Executor& e, SocketAddr const& addr) -> StdResult<Tcp
 }
 auto TcpListener::accept(SocketAddr* addr) -> Task<StdResult<TcpStream>>
 {
-  assert(mExecutor);
-  if (addr != nullptr) {
-    assert(0);
-    sockaddr_storage storage;
-    socklen_t len = sizeof(storage);
-    auto r = io::SocketAddrToSockAddr(*addr, &storage, &len);
-    assert(r);
-    auto accept4r = ::accept(mSocket.raw(), (sockaddr*)&storage, &len);
-    if (accept4r != -1) {
-      LOG_INFO("accept4r: {}", strerror(errno));
-      assert(accept4r != -1);
-    }
-    co_return TcpStream {mExecutor, Socket {accept4r}};
-  } else {
-    auto accept4r = ::accept4(mSocket.raw(), nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
-    if (accept4r == -1) {
-      if (io::LastError() == std::errc::resource_unavailable_try_again ||
-          io::LastError() == std::errc::operation_would_block) {
-        co_await ReadableAwaiter {*mExecutor, mSocket.raw()};
-        accept4r = ::accept4(mSocket.raw(), nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
-        if (accept4r == -1) {
-          LOG_INFO("accept4r: {}", strerror(errno));
-        }
-        assert(accept4r != -1);
-        co_return TcpStream {mExecutor, Socket {accept4r}};
-      }
-      co_return make_unexpected(io::LastError());
-    } else {
-      co_return TcpStream {mExecutor, Socket {accept4r}};
-    }
-  }
+  // assert(mExecutor);
+  // if (addr != nullptr) {
+  //   assert(0);
+  //   sockaddr_storage storage;
+  //   socklen_t len = sizeof(storage);
+  //   auto r = io::SocketAddrToSockAddr(*addr, &storage, &len);
+  //   assert(r);
+  //   auto accept4r = ::accept(mSocket.raw(), (sockaddr*)&storage, &len);
+  //   if (accept4r != -1) {
+  //     LOG_INFO("accept4r: {}", strerror(errno));
+  //     assert(accept4r != -1);
+  //   }
+  //   co_return TcpStream {mExecutor, Socket {accept4r}};
+  // } else {
+  //   auto accept4r = ::accept4(mSocket.raw(), nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+  //   if (accept4r == -1) {
+  //     if (io::LastError() == std::errc::resource_unavailable_try_again ||
+  //         io::LastError() == std::errc::operation_would_block) {
+  //       co_await ReadableAwaiter {*mExecutor, mSocket.raw()};
+  //       accept4r = ::accept4(mSocket.raw(), nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+  //       if (accept4r == -1) {
+  //         LOG_INFO("accept4r: {}", strerror(errno));
+  //       }
+  //       assert(accept4r != -1);
+  //       co_return TcpStream {mExecutor, Socket {accept4r}};
+  //     }
+  //     co_return make_unexpected(io::LastError());
+  //   } else {
+  //     co_return TcpStream {mExecutor, Socket {accept4r}};
+  //   }
+  // }
 }
 } // namespace io::async

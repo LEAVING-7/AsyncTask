@@ -44,3 +44,11 @@ auto SysCall(Fn fn, Args... args) -> StdResult<std::invoke_result_t<Fn, Args...>
     return result;
   }
 }
+
+#include <variant>
+template <class... Ts>
+struct overloaded : Ts... {
+  using Ts::operator()...;
+};
+template <class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;

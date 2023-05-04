@@ -178,20 +178,21 @@ struct CleanTask {
   struct promise_type {
     std::exception_ptr exceptionPtr;
     T value;
+    std::function<void(T&&)> afterCleanUpFn {nullptr};
 
-    std::function<void(T&&)> afterCleanUpFn;
     auto get_return_object() -> CleanTask { return CleanTask {coroutine_handle_type::from_promise(*this)}; }
     auto initial_suspend() noexcept -> std::suspend_always { return {}; }
     auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
-    auto return_value(std::pair<std::function<void(T&&)>, T>&& pair) -> void
-    {
-      afterCleanUpFn = std::move(pair.first);
-      value = std::forward<T>(pair.second);
-    }
+    auto return_value(T&& in) -> void { value = std::forward<T>(in); }
     auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
   };
-  explicit CleanTask(coroutine_handle_type handle) : coHandle(handle) {}
-  coroutine_handle_type coHandle {nullptr};
+  explicit CleanTask(coroutine_handle_type in) : handle(in) {}
+  auto afterDestroy(std::function<void(T&&)>&& fn) -> CleanTask
+  {
+    handle.promise().afterCleanUpFn = std::move(fn);
+    return *this;
+  };
+  coroutine_handle_type handle {nullptr};
 };
 
 template <>
@@ -215,14 +216,19 @@ struct CleanTask<void> {
 
   struct promise_type {
     std::exception_ptr exceptionPtr;
+    std::function<void(void)> afterCleanUpFn {nullptr};
 
-    std::function<void(void)> afterCleanUpFn;
     auto get_return_object() -> CleanTask { return CleanTask {coroutine_handle_type::from_promise(*this)}; }
     auto initial_suspend() noexcept -> std::suspend_always { return {}; }
     auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
-    auto return_value(std::function<void(void)> fn) -> void { afterCleanUpFn = std::move(fn); }
+    auto return_void() -> void {}
     auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
   };
-  explicit CleanTask(coroutine_handle_type handle) : coHandle(handle) {}
-  coroutine_handle_type coHandle {nullptr};
+  explicit CleanTask(coroutine_handle_type in) : handle(in) {}
+  auto afterDestroy(std::function<void(void)>&& fn) -> CleanTask
+  {
+    handle.promise().afterCleanUpFn = std::move(fn);
+    return *this;
+  };
+  coroutine_handle_type handle {nullptr};
 };

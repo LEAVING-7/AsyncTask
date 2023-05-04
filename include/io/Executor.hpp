@@ -62,73 +62,45 @@ public:
   {
     mSpawnedTaskCount += 1;
     int a = 233;
-    auto afterDone = [this]() -> void { mSpawnedTaskCount -= 1; };
-    auto spawnTask = [](Task<> task, std::function<void()> fn) -> CleanTask<void> {
+    auto spawnTask = [](Task<> task) -> CleanTask<void> {
       co_await task;
-      co_return std::move(fn);
-    }(std::move(task), std::move(afterDone));
-    auto handle = spawnTask.coHandle;
-    mThreadPool.push_task([handle, this]() mutable { handle.resume(); });
+      co_return;
+    }(std::move(task));
+    spawnTask.afterDestroy([this] { mSpawnedTaskCount -= 1; });
+    mThreadPool.push_task(spawnTask.handle);
   }
 
   template <typename T>
   auto blockOn(Task<T> task) -> T
   {
-    mBlockOnReturnValue.store(nullptr);
-    mBlockOnDone.store(false);
-
     auto promise = std::promise<T> {};
     auto future = promise.get_future();
 
     auto handle = std::coroutine_handle<> {nullptr};
     if constexpr (!std::is_void_v<T>) {
-      auto afterDone = [this](T&& value) {
-        mBlockOnReturnValue = new T {std::move(value)};
-        mBlockOnReturnValue.notify_one();
-        mBlockOnDone.exchange(true);
-        mBlockOnDone.notify_one();
+      auto afterDone = [this, &promise](T&& value) {
+        promise.set_value(std::move(value));
         return;
       };
-      auto blockOnTask = [](Task<T> task, std::function<void(T &&)> fn) -> CleanTask<T> {
-        co_return {std::move(fn), co_await task};
-      }(std::move(task), std::move(afterDone));
-      handle = blockOnTask.coHandle;
+      auto blockOnTask = [](Task<T> task)
+          -> CleanTask<T> { co_return co_await std::move(task); }(std::move(task)).afterDestroy(std::move(afterDone));
+      handle = blockOnTask.handle;
     } else {
-      auto afterDone = [this]() {
-        mBlockOnReturnValue = (void*)1;
-        mBlockOnReturnValue.notify_one();
-        mBlockOnDone.exchange(true);
-        mBlockOnDone.notify_one();
+      auto afterDone = [this, &promise]() {
+        promise.set_value();
         return;
       };
-      auto blockOnTask = [](Task<T> task, std::function<void()> fn) -> CleanTask<T> {
-        co_await task;
-        co_return std::move(fn);
-      }(std::move(task), std::move(afterDone));
-      handle = blockOnTask.coHandle;
+      auto blockOnTask = [](Task<void> task) -> CleanTask<void> { co_return co_await std::move(task); }(std::move(task))
+                                                    .afterDestroy(std::move(afterDone));
+      handle = blockOnTask.handle;
     }
-
     mThreadPool.push_task(handle);
-    LOG_INFO("Before wait");
-    mBlockOnDone.wait(false);
-    LOG_INFO("After wait, with tasks: {}", mThreadPool.task_total());
-    mBlockOnReturnValue.wait(nullptr);
     mThreadPool.wait_for_tasks();
+    future.wait();
     while (mSpawnedTaskCount != mSpawnedTaskDoneCount) {
       LOG_INFO("wait for tasks: {}/{}", mSpawnedTaskDoneCount, mSpawnedTaskCount);
     }
-
-    future.wait();
-
-    if constexpr (std::is_void_v<T>) {
-      assert(mBlockOnReturnValue == (void*)(1));
-      return;
-    } else {
-      auto ptr = reinterpret_cast<T*>(mBlockOnReturnValue.load());
-      T result = std::move(*ptr);
-      delete ptr;
-      return result;
-    }
+    return future.get();
   }
 
   auto regTask(int fd, std::coroutine_handle<> handle, bool readable, bool writable) -> StdResult<void>
@@ -198,16 +170,12 @@ private:
           if (co == nullptr) {
             LOG_ERROR("cannot find coroutine for key {}", e.key);
           } else {
-            exe.mThreadPool.push_task([co]() mutable { co.resume(); });
+            exe.mThreadPool.push_task(co);
           }
         }
       }
     }
   }
-
-  std::atomic_bool mBlockOnDone {false};
-  std::atomic<void*> mBlockOnReturnValue {nullptr};
-
   std::atomic_size_t mSpawnedTaskCount;
   std::atomic_size_t mSpawnedTaskDoneCount;
 

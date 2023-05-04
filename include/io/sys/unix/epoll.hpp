@@ -73,7 +73,7 @@ public:
   auto mod(int fd, Event ev, PollMode mode) -> StdResult<void>;
   auto del(int fd) -> StdResult<void>;
 
-  auto wait(Events& events, std::optional<std::chrono::milliseconds> timeout) -> StdResult<void>;
+  auto wait(Events& events, std::optional<std::chrono::nanoseconds> timeout) -> StdResult<void>;
   auto notify() -> StdResult<void>;
 
   // private:

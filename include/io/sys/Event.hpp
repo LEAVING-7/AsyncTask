@@ -66,7 +66,7 @@ public:
   }
   auto del(int fd) -> StdResult<void> { return mPoller.del(fd); }
 
-  auto wait(std::vector<Event>& events, std::optional<std::chrono::milliseconds> timeout) -> StdResult<size_t>
+  auto wait(std::vector<Event>& events, std::optional<std::chrono::nanoseconds> timeout) -> StdResult<size_t>
   {
     auto t = mEventsLock.try_lock();
     if (t) {

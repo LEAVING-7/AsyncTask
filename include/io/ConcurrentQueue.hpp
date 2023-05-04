@@ -34,7 +34,7 @@ private:
 constexpr std::size_t hardware_destructive_interference_size = 64;
 
 template <typename T>
-class Deque {
+class ConcurrentQueue {
   using std::memory_order::acq_rel;
   using std::memory_order::acquire;
   using std::memory_order::relaxed;
@@ -42,10 +42,10 @@ class Deque {
   using std::memory_order::seq_cst;
 
 public:
-  explicit Deque(int64_t cap = 1024) : mTop(0), mBottom(0), mBuffer(new RingBuffer<T> {cap}) { mGarbage.reserve(32); }
+  explicit ConcurrentQueue(int64_t cap = 1024) : mTop(0), mBottom(0), mBuffer(new RingBuffer<T> {cap}) { mGarbage.reserve(32); }
 
-  Deque(Deque const& other) = delete;
-  Deque& operator=(Deque const& other) = delete;
+  ConcurrentQueue(ConcurrentQueue const& other) = delete;
+  ConcurrentQueue& operator=(ConcurrentQueue const& other) = delete;
 
   auto size() const noexcept -> size_t
   {
@@ -70,7 +70,7 @@ public:
     }
 
     buf->store(b, std::move(obj));
-
+    
     std::atomic_thread_fence(release);
     mBottom.store(b + 1, relaxed);
   }
@@ -116,7 +116,7 @@ public:
       return std::nullopt;
     }
   }
-  ~Deque() noexcept { delete mBuffer.load(); };
+  ~ConcurrentQueue() noexcept { delete mBuffer.load(); };
 
 private:
   alignas(hardware_destructive_interference_size) std::atomic_int64_t mTop;

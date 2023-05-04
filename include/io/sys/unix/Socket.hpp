@@ -19,7 +19,7 @@ auto LastError() -> std::error_code;
 class Socket {
 public:
   Socket() = default;
-  Socket(int handle);
+  Socket(int fd);
   Socket(Socket&& other);
   Socket& operator=(Socket&& other);
 
