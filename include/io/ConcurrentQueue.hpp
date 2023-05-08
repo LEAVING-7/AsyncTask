@@ -42,7 +42,10 @@ class ConcurrentQueue {
   using std::memory_order::seq_cst;
 
 public:
-  explicit ConcurrentQueue(int64_t cap = 1024) : mTop(0), mBottom(0), mBuffer(new RingBuffer<T> {cap}) { mGarbage.reserve(32); }
+  explicit ConcurrentQueue(int64_t cap = 1024) : mTop(0), mBottom(0), mBuffer(new RingBuffer<T> {cap})
+  {
+    mGarbage.reserve(32);
+  }
 
   ConcurrentQueue(ConcurrentQueue const& other) = delete;
   ConcurrentQueue& operator=(ConcurrentQueue const& other) = delete;
@@ -59,7 +62,7 @@ public:
   template <typename... Args>
   void emplace(Args&&... args)
   {
-    auto obj = T(std::forward<Args>(args)...);
+    auto obj = T {std::forward<Args>(args)...};
     auto b = mBottom.load(relaxed);
     auto t = mTop.load(acquire);
     auto buf = mBuffer.load(relaxed);
@@ -70,7 +73,7 @@ public:
     }
 
     buf->store(b, std::move(obj));
-    
+
     std::atomic_thread_fence(release);
     mBottom.store(b + 1, relaxed);
   }
@@ -94,7 +97,7 @@ public:
         }
         mBottom.store(b + 1, relaxed);
       }
-      return buf.load(b);
+      return buf->load(b);
     } else {
       mBottom.store(b + 1, relaxed);
       return std::nullopt;
@@ -107,7 +110,7 @@ public:
     auto b = mBottom.load(acquire);
 
     if (t < b) {
-      auto x = mBuffer.load(seq_cst).load(t);
+      auto x = mBuffer.load(seq_cst)->load(t);
       if (!mTop.compare_exchange_strong(t, t + 1, seq_cst, relaxed)) {
         return std::nullopt;
       }
@@ -125,3 +128,22 @@ private:
 
   std::vector<std::unique_ptr<RingBuffer<T>>> mGarbage;
 };
+
+template <typename T>
+auto Steal(ConcurrentQueue<T>& src, ConcurrentQueue<T>& dst) -> bool
+{
+  auto count = (src.size() + 1) / 2;
+  if (count > 0) {
+    if (dst.cap()) {
+      count = std::min(count, dst.cap() - dst.size());
+    }
+    for (auto i = 0; i < count; ++i) {
+      if (auto x = src.steal(); x) {
+        dst.emplace(std::move(x.value()));
+      } else {
+        return false;
+      }
+    }
+  }
+  return true;
+}

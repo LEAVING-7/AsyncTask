@@ -122,6 +122,7 @@ public:
     insertAt(key, std::move(data));
     return key;
   }
+  auto insert(T const& data) -> size_t { return insert(T {data}); }
   auto tryRemove(size_t key) -> std::optional<T>
   {
     if (auto entry = getEntry(key); entry.has_value()) {

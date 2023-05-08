@@ -19,20 +19,27 @@ public:
   TcpStream(TcpStream const&) = delete;
   TcpStream& operator=(TcpStream const&) = delete;
 
-  ~TcpStream() {}
+  ~TcpStream()
+  {
+    if (mSource) {
+      auto r = mReactor->removeIo(*mSource);
+      assert(r);
+      close();
+    }
+  }
 
-  static auto Connect(io::Reactor& e, SocketAddr const& addr) -> StdResult<TcpStream>;
+  static auto Connect(io::Reactor* e, SocketAddr const& addr) -> StdResult<TcpStream>;
 
   auto read(void* buf, size_t len) -> Task<StdResult<size_t>>;
   auto write(void const* buf, size_t len) -> Task<StdResult<size_t>>;
 
-  auto setLinger(bool enable, int timeout) -> StdResult<void> { return Socket().setLinger(enable, timeout); }
-  auto linger() -> StdResult<Optional<std::chrono::seconds>> { return mSocket.linger(); }
-  auto setNoDelay(bool enable) -> StdResult<void> { return mSocket.setNoDelay(enable); }
-  auto nodelay() -> StdResult<bool> { return mSocket.nodelay(); }
-  auto socket() const -> io::Socket const& { return mSocket; }
+  auto setLinger(bool enable, int timeout) -> StdResult<void> { return socket().setLinger(enable, timeout); }
+  auto linger() -> StdResult<Optional<std::chrono::seconds>> { return socket().linger(); }
+  auto setNoDelay(bool enable) -> StdResult<void> { return socket().setNoDelay(enable); }
+  auto nodelay() -> StdResult<bool> { return socket().nodelay(); }
+  auto socket() const -> io::Socket { return Socket(mSource->fd); }
 
-  auto close() -> StdResult<void> { return mSocket.close(); }
+  auto close() -> StdResult<void> { return socket().close(); }
 
 private:
   std::shared_ptr<Source> mSource;
@@ -41,24 +48,29 @@ private:
 
 class TcpListener {
 public:
-  TcpListener(io::Reactor* reactor, Socket&& socket) : mSocket(std::move(socket)), mReactor(reactor) {}
+  TcpListener(io::Reactor* reactor, Socket socket) : mReactor(reactor)
+  {
+    auto r = reactor->insertIo(socket.raw());
+    assert(r);
+    mSource = r.value();
+  }
   TcpListener(TcpListener&& other) = default;
   TcpListener& operator=(TcpListener&& other) = default;
-  ~TcpListener() { mSocket.close(); }
+  ~TcpListener() {}
 
-  static auto Bind(io::Reactor& e, SocketAddr const& addr) -> StdResult<TcpListener>;
+  static auto Bind(io::Reactor* e, SocketAddr const& addr) -> StdResult<TcpListener>;
   auto accept(SocketAddr* addr = nullptr) -> Task<StdResult<TcpStream>>;
 
-  auto setLinger(bool enable, int timeout) -> StdResult<void> { return mSocket.setLinger(enable, timeout); }
-  auto linger() const -> StdResult<Optional<std::chrono::seconds>> { return mSocket.linger(); }
-  auto setNoDelay(bool enable) -> StdResult<void> { return mSocket.setNoDelay(enable); }
-  auto nodelay() const -> StdResult<bool> { return mSocket.nodelay(); }
-  auto socket() const -> io::Socket const& { return mSocket; }
+  auto setLinger(bool enable, int timeout) -> StdResult<void> { return socket().setLinger(enable, timeout); }
+  auto linger() const -> StdResult<Optional<std::chrono::seconds>> { return socket().linger(); }
+  auto setNoDelay(bool enable) -> StdResult<void> { return socket().setNoDelay(enable); }
+  auto nodelay() const -> StdResult<bool> { return socket().nodelay(); }
+  auto socket() const -> io::Socket { return {mSource->fd}; }
 
-  auto close() -> StdResult<void> { return mSocket.close(); }
+  auto close() -> StdResult<void> { return socket().close(); }
 
 private:
-  io::Socket mSocket;
+  std::shared_ptr<Source> mSource;
   io::Reactor* mReactor;
 };
 } // namespace io::async

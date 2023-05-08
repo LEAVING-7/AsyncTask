@@ -3,7 +3,8 @@ cmake_minimum_required(VERSION 3.20)
 project(io)
 
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_FLAGS "-fsanitize=address")
+
+set(CMAKE_CXX_FLAGS "-fsanitize=address -fcolor-diagnostics")
 
 file(GLOB SOURCES 
       "lib/*.cpp" 

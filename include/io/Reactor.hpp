@@ -25,8 +25,10 @@ struct Source {
     Direction write;
   };
 
+  Source(int fd, size_t key) : fd(fd), key(key) {}
   int const fd;
-  size_t const key;
+  size_t key;
+
   std::mutex stateLock;
   State state;
   auto setReadable(std::coroutine_handle<> handle) -> bool
@@ -47,7 +49,7 @@ struct Source {
     }
     return false;
   }
-  auto getEvent() const -> Event
+  auto getEvent() -> Event
   {
     auto lk = std::unique_lock {stateLock};
     auto event = Event::None(key);
@@ -74,17 +76,14 @@ struct TimerOp {
   std::variant<Insert, Remove> op;
 };
 
-struct Executor1 {
-  virtual void execute(std::span<std::coroutine_handle<>> handles) = 0;
-};
-
 class Reactor;
 
 struct ReactorLock {
   Reactor& reactor;
   std::unique_lock<std::mutex> eventLock; // eventLock must be held
 
-  auto react(std::optional<TimePoint::duration> timeout, Executor1& e) -> StdResult<void>;
+  template <typename ExecutorType>
+  auto react(std::optional<TimePoint::duration> timeout, ExecutorType& e) -> StdResult<void>;
 };
 
 class Reactor {
@@ -92,18 +91,17 @@ class Reactor {
 
 public:
   Reactor() : mPoller(), mTicker(0), mSources(), mEvents(), mTimers(), mTimerOps() {}
-
+  ~Reactor() {}
   auto ticker() -> size_t { return mTicker.load(); }
   auto insertIo(int fd) -> StdResult<std::shared_ptr<Source>>
   {
     auto sourceLk = std::unique_lock {mSourceLock};
-    auto key = mSources.vacantEntry().key;
-    auto source = std::make_shared<Source>(fd, key);
-    auto k = mSources.insert(std::move(source));
-    assert(k == key);
+    auto source = std::make_shared<Source>(fd, 0);
+    auto key = mSources.insert(source);
+    source->key = key;
     sourceLk.unlock();
 
-    if (auto r = mPoller.add(fd, Event::None(source->key)); !r) {
+    if (auto r = mPoller.add(fd, Event::None(key)); !r) {
       auto lk = std::unique_lock {mSourceLock};
       auto e = mSources.tryRemove(key);
       assert(e);
@@ -227,7 +225,8 @@ private:
   ConcurrentQueue<TimerOp> mTimerOps;
 };
 
-inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, Executor1& e) -> StdResult<void>
+template <typename ExecutorType>
+inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, ExecutorType& e) -> StdResult<void>
 {
   using namespace std::chrono_literals;
   auto handles = std::vector<std::coroutine_handle<>> {};
@@ -244,7 +243,6 @@ inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, Execu
 
   auto tick = reactor.mTicker.fetch_add(1) + 1;
   reactor.mEvents.clear();
-  auto res = StdResult<void> {};
   if (auto r = reactor.mPoller.wait(reactor.mEvents, waitTimeout); r) {
     if (r.value() == 0) {
       if (*waitTimeout != 0s) {
@@ -267,11 +265,19 @@ inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, Execu
       }
     }
   } else if (r.error() == std::errc::interrupted) {
-    res.emplace();
+    for (auto handle : handles) {
+      e.execute(handle);
+    }
+    return make_unexpected(r.error());
   } else {
-    res.emplace(r.error());
+    for (auto handle : handles) {
+      e.execute(handle);
+    }
+    return make_unexpected(r.error());
   }
-  e.execute(handles);
-  return res;
+  for (auto handle : handles) {
+    e.execute(handle);
+  }
+  return {};
 }
 } // namespace io

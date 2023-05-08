@@ -41,7 +41,7 @@ struct WritableAwaiter {
   void await_resume() noexcept {}
 };
 
-auto TcpStream::Connect(io::Reactor& e, SocketAddr const& addr) -> StdResult<TcpStream>
+auto TcpStream::Connect(io::Reactor* reactor, SocketAddr const& addr) -> StdResult<TcpStream>
 {
   auto socket = io::CreateSocket(addr, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC);
   // assert(socket);
@@ -52,7 +52,7 @@ auto TcpStream::Connect(io::Reactor& e, SocketAddr const& addr) -> StdResult<Tcp
   if (!r) {
     return make_unexpected(r.error());
   }
-  return TcpStream {&e, std::move(*socket)};
+  return TcpStream {reactor, std::move(*socket)};
 }
 auto TcpStream::read(void* buf, size_t len) -> Task<StdResult<size_t>>
 {
@@ -74,7 +74,7 @@ auto TcpStream::write(void const* buf, size_t len) -> Task<StdResult<size_t>>
     co_return r;
   }
 }
-auto TcpListener::Bind(io::Executor& e, SocketAddr const& addr) -> StdResult<TcpListener>
+auto TcpListener::Bind(io::Reactor* reactor, SocketAddr const& addr) -> StdResult<TcpListener>
 {
   auto socket = io::CreateSocket(addr, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC);
   assert(socket);
@@ -96,10 +96,32 @@ auto TcpListener::Bind(io::Executor& e, SocketAddr const& addr) -> StdResult<Tcp
   if (intr == -1) {
     return make_unexpected(io::LastError());
   }
-  return TcpListener {&e, std::move(*socket)};
+  return TcpListener {reactor, std::move(*socket)};
 }
 auto TcpListener::accept(SocketAddr* addr) -> Task<StdResult<TcpStream>>
 {
+  assert(mReactor);
+  if (addr == nullptr) {
+    auto r = ::accept4(mSource->fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    if (r == -1) {
+      if (io::LastError() == std::errc::resource_unavailable_try_again ||
+          io::LastError() == std::errc::operation_would_block) {
+        co_await ReadableAwaiter {mReactor, mSource.get()};
+        r = ::accept4(mSource->fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if (r == -1) {
+          LOG_INFO("accept4r: {}", strerror(errno));
+        }
+        assert(r != -1);
+        co_return TcpStream {mReactor, Socket {r}};
+      } else {
+        co_return make_unexpected(io::LastError());
+      }
+    } else {
+      co_return TcpStream {mReactor, Socket {r}};
+    }
+  } else {
+    assert(0);
+  }
   // assert(mExecutor);
   // if (addr != nullptr) {
   //   assert(0);
