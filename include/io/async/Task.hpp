@@ -156,7 +156,7 @@ inline auto Promise<void>::get_return_object() noexcept -> Task<void>
 }
 
 template <typename T>
-struct CleanTask {
+struct DetachTask {
   struct promise_type;
   using coroutine_handle_type = std::coroutine_handle<promise_type>;
 
@@ -180,14 +180,14 @@ struct CleanTask {
     T value;
     std::function<void(T&&)> afterCleanUpFn {nullptr};
 
-    auto get_return_object() -> CleanTask { return CleanTask {coroutine_handle_type::from_promise(*this)}; }
+    auto get_return_object() -> DetachTask { return DetachTask {coroutine_handle_type::from_promise(*this)}; }
     auto initial_suspend() noexcept -> std::suspend_always { return {}; }
     auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
     auto return_value(T&& in) -> void { value = std::forward<T>(in); }
     auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
   };
-  explicit CleanTask(coroutine_handle_type in) : handle(in) {}
-  auto afterDestroy(std::function<void(T&&)>&& fn) -> CleanTask
+  explicit DetachTask(coroutine_handle_type in) : handle(in) {}
+  auto afterDestroy(std::function<void(T&&)>&& fn) -> DetachTask
   {
     handle.promise().afterCleanUpFn = std::move(fn);
     return *this;
@@ -196,7 +196,7 @@ struct CleanTask {
 };
 
 template <>
-struct CleanTask<void> {
+struct DetachTask<void> {
   struct promise_type;
   using coroutine_handle_type = std::coroutine_handle<promise_type>;
 
@@ -218,14 +218,14 @@ struct CleanTask<void> {
     std::exception_ptr exceptionPtr;
     std::function<void(void)> afterCleanUpFn {nullptr};
 
-    auto get_return_object() -> CleanTask { return CleanTask {coroutine_handle_type::from_promise(*this)}; }
+    auto get_return_object() -> DetachTask { return DetachTask {coroutine_handle_type::from_promise(*this)}; }
     auto initial_suspend() noexcept -> std::suspend_always { return {}; }
     auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
     auto return_void() -> void {}
     auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
   };
-  explicit CleanTask(coroutine_handle_type in) : handle(in) {}
-  auto afterDestroy(std::function<void(void)>&& fn) -> CleanTask
+  explicit DetachTask(coroutine_handle_type in) : handle(in) {}
+  auto afterDestroy(std::function<void(void)>&& fn) -> DetachTask
   {
     handle.promise().afterCleanUpFn = std::move(fn);
     return *this;

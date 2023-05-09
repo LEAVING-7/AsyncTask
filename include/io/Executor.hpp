@@ -4,22 +4,17 @@
 #include "Slab.hpp"
 #include "async/Task.hpp"
 #include "log.hpp"
-#include <condition_variable>
-#include <coroutine>
+#include <deque>
 #include <future>
-#include <memory>
-#include <mutex>
 #include <random>
 #include <shared_mutex>
-#include <thread>
 
+namespace io {
 class State {
 public:
   friend class Runner;
 
-  State()
-      : mGlobal(), mLocalQueuesMt(), mLocals(), /* mNotified(false), */ mActiveMt(), mActives(), mWaitingMt(),
-        mWaiting()
+  State() : mGlobal(), mLocalQueuesMt(), mLocals(), mActiveMt(), mActives(), mWaitingMt(), mWaiting()
   {
     mActives.reserve(1024);
   }
@@ -29,7 +24,7 @@ public:
     auto globEmpty = mGlobal.empty();
     auto lk = std::shared_lock(mActiveMt);
     auto actEmpty = mActives.isEmpty();
-    return globEmpty && actEmpty;
+    return actEmpty && globEmpty;
   }
 
   auto waitEmpty() -> void
@@ -43,7 +38,6 @@ public:
     mActiveMt.lock();
     auto key = mActives.insert(in.handle());
     mActiveMt.unlock();
-    LOG_INFO("spawn after insert to slab");
     auto cleanUpFn = [this, key]() {
       mActiveMt.lock();
       auto r = mActives.tryRemove(key);
@@ -53,12 +47,10 @@ public:
       }
       mActiveMt.unlock();
     };
-
     auto cleanUpCo =
-        [this](Task<> task) -> CleanTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(cleanUpFn);
+        [this](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(cleanUpFn);
     std::coroutine_handle<> handle = cleanUpCo.handle;
     execute(handle);
-    LOG_INFO("after spawned");
   }
 
   template <typename T>
@@ -69,18 +61,20 @@ public:
     if constexpr (std::is_void_v<T>) {
       auto cleanFn = [promise, &reactor]() {
         promise->set_value();
+        LOG_INFO("notify reactor");
         reactor.notify();
       };
-      auto cleanUpCo =
-          [](Task<T> task) -> CleanTask<T> { co_return co_await task; }(std::move(in)).afterDestroy(std::move(cleanFn));
+      auto cleanUpCo = [](Task<T> task)
+          -> DetachTask<T> { co_return co_await task; }(std::move(in)).afterDestroy(std::move(cleanFn));
       execute(cleanUpCo.handle);
     } else {
       auto cleanFn = [promise, &reactor](auto&& value) {
         promise->set_value(std::forward<T>(value));
+        LOG_INFO("notify reactor");
         reactor.notify();
       };
-      auto cleanUpCo =
-          [](Task<T> task) -> CleanTask<T> { co_return co_await task; }(std::move(in)).afterDestroy(std::move(cleanFn));
+      auto cleanUpCo = [](Task<T> task)
+          -> DetachTask<T> { co_return co_await task; }(std::move(in)).afterDestroy(std::move(cleanFn));
       execute(cleanUpCo.handle);
     }
     return future;
@@ -92,7 +86,6 @@ public:
     mGlobal.emplace(handle);
     LOG_INFO("global size : {}", mGlobal.size());
     mWaiting.notify_one();
-    LOG_INFO("after notify");
   }
 
 private:
@@ -126,11 +119,12 @@ public:
   auto acquire() -> std::coroutine_handle<>
   {
     if (auto h = mLocal->pop(); h) {
-      LOG_INFO("steal from local : {}", h->address());
+      LOG_CRITICAL("acqure from local: {}", h->address());
       return h.value();
     } else if (auto h = mState.mGlobal.pop(); h) {
-      LOG_INFO("steal from global : {}", h->address());
       Steal(mState.mGlobal, *mLocal);
+      LOG_INFO("steal from global : {}", h->address());
+      LOG_INFO("local size : {}", mLocal->size());
       return h.value();
     } else {
       auto lk = std::unique_lock(mState.mLocalQueuesMt);
@@ -219,8 +213,6 @@ private:
   std::vector<std::shared_ptr<Runner>> mRunners;
 };
 
-#include <deque>
-
 auto constexpr DEFAULT_MAX_THREAD = 500;
 auto constexpr MIN_MAX_THREAD = 1;
 auto constexpr MAX_MAX_THREAD = 10000;
@@ -279,3 +271,4 @@ private:
   std::deque<std::coroutine_handle<>> mQueue;
   size_t mThreadLimits;
 };
+} // namespace io

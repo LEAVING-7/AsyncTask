@@ -124,6 +124,22 @@ public:
     auto event = e->get()->getEvent();
     return mPoller.mod(source.fd, event);
   }
+  auto sleep(TimePoint::duration duration)
+  {
+    struct SleepAwaiter {
+      io::Reactor* reactor;
+      TimePoint when;
+      size_t id;
+      auto await_ready() const -> bool { return false; }
+      auto await_suspend(std::coroutine_handle<> handle) -> void { id = reactor->insertTimer(when, handle); }
+      auto await_resume() const -> void
+      {
+        LOG_CRITICAL("after suspend, id:{}", id);
+        reactor->removeTimer(when, id);
+      }
+    };
+    return SleepAwaiter {this, TimePoint::clock::now() + duration, (size_t)-1};
+  }
   auto insertTimer(TimePoint when, std::coroutine_handle<> handle) -> size_t
   {
     static auto ID_GENERATOR = std::atomic_size_t {0};
@@ -144,13 +160,13 @@ public:
     using namespace std::chrono_literals;
     auto lk = std::unique_lock {mTimerLock};
     processTimeOps(mTimers);
-
-    auto now = std::chrono::steady_clock::now() + 1ns;
     auto pending = std::vector<std::pair<TimePoint, size_t>> {};
-    auto ready = std::vector<std::pair<TimePoint, size_t>> {};
+    auto ready = std::vector<std::coroutine_handle<>> {};
+    auto now = TimePoint::clock::now() + 1ns;
     for (auto const& entry : mTimers) {
       if (entry.first.first <= now) {
-        ready.push_back(entry.first);
+        ready.push_back(entry.second);
+        mTimers.erase(entry.first);
       } else {
         pending.push_back(entry.first);
       }
@@ -167,8 +183,8 @@ public:
       }
     }
     lk.unlock();
-    for (auto const& entry : ready) {
-      handles.push_back(mTimers[entry]);
+    for (auto const handle : ready) {
+      handles.push_back(handle);
     }
     return duration;
   }
