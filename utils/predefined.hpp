@@ -14,6 +14,9 @@ using f64 = double;
 
 #include <cassert>
 #include <iostream>
+#include <system_error>
+#include <optional>
+
 #define UNIMPLEMENTED(...)                                                                                             \
   do {                                                                                                                 \
     std::cerr << "Unimplemented: " << __FUNCTION__ << std::endl;                                                       \
@@ -24,12 +27,10 @@ using f64 = double;
 template <typename... Args>
 using Expected = tl::expected<Args...>;
 
-#include <system_error>
 template <typename T>
 using StdResult = Expected<T, std::error_code>;
 
 using tl::make_unexpected;
-#include <optional>
 template <typename T>
 using Optional = std::optional<T>;
 

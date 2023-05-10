@@ -64,41 +64,39 @@ using namespace std::chrono_literals;
 //   LOG_INFO("main thread exit");
 // }
 
-/* int main1()
-{
-  auto executor = io::Executor {};
-  auto i = executor.blockOn([&executor]() -> Task<int> {
-    LOG_INFO("hello world");
-    std::this_thread::sleep_for(1s);
-    executor.spawn([]() -> Task<> {
-      LOG_INFO("spawned task");
-      std::this_thread::sleep_for(3s);
-      co_return;
-    }());
-    co_return 233;
-  }());
-  LOG_INFO("i: {}", i);
-} */
-
+#include <random>
 int main()
 {
-  auto e = io::Executor {};
+  auto e = io::MutilThreadExecutor {8};
   auto r = io::Reactor {};
-  auto f = e.blockOn(
-      [](io::Executor& e, io::Reactor& r) -> Task<> {
-        LOG_INFO("before sleep");
-        co_await r.sleep(2s);
-        LOG_INFO("after sleep");
+  auto now = std::chrono::steady_clock::now();
+  e.block(
+      [](io::MutilThreadExecutor& e, io::Reactor& r) -> Task<> {
+        e.spawn(
+            [](io::Reactor& r) -> Task<> {
+              LOG_CRITICAL("______ A task");
+              co_await r.sleep(7s);
+            }(r),
+            r);
+        e.spawn(
+            [](io::Reactor& r) -> Task<> {
+              LOG_CRITICAL("______ B task");
+              co_await r.sleep(8s);
+            }(r),
+            r);
+        for (int i = 0; i < 1000; i++) {
+          e.spawn(
+              [](int i, io::Reactor& r) -> Task<> {
+                // LOG_CRITICAL("______ C task {}", i);
+                co_await r.sleep(1000ms);
+                // co_return;
+              }(i, r),
+              r);
+        }
         co_return;
       }(e, r),
       r);
-  while (true) {
-    if (f.wait_for(0ns) == std::future_status::ready) {
-      LOG_INFO("future ready");
-      break;
-    }
-    r.lock().react(std::nullopt, e);
-  }
-  e.waitEmpty();
-  LOG_INFO("main thread exit");
+  auto done = std::chrono::steady_clock::now();
+  LOG_INFO("elapsed: {}s", std::chrono::duration_cast<std::chrono::seconds>(done - now).count());
+  LOG_INFO("main thread end, with return value: {}", 123);
 }

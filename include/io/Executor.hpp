@@ -4,8 +4,10 @@
 #include "Slab.hpp"
 #include "async/Task.hpp"
 #include "log.hpp"
+#include <concepts>
 #include <deque>
 #include <future>
+#include <queue>
 #include <random>
 #include <shared_mutex>
 
@@ -13,91 +15,51 @@ namespace io {
 class State {
 public:
   friend class Runner;
+  friend class Executor;
 
-  State() : mGlobal(), mLocalQueuesMt(), mLocals(), mActiveMt(), mActives(), mWaitingMt(), mWaiting()
-  {
-    mActives.reserve(1024);
-  }
+  State() : mGlobal(), mLocalQueuesMt(), mLocals(), mWaitingMt(), mWaiting(), mHandleCount(0) {}
 
-  auto isEmpty() -> bool
-  {
-    auto globEmpty = mGlobal.empty();
-    auto lk = std::shared_lock(mActiveMt);
-    auto actEmpty = mActives.isEmpty();
-    return actEmpty && globEmpty;
-  }
-
+  auto isEmpty() -> bool { return isGlobalEmpty() && isLocalsEmpty(); }
   auto waitEmpty() -> void
   {
-    auto lk = std::shared_lock(mActiveMt);
-    mActiveCv.wait(lk, [this]() { return mActives.isEmpty(); });
+    auto lk = std::unique_lock(mDoneMt);
+    mDone.wait(lk, [this]() { return mHandleCount == 0; });
   }
-
-  auto spawn(Task<> in) -> void
-  {
-    mActiveMt.lock();
-    auto key = mActives.insert(in.handle());
-    mActiveMt.unlock();
-    auto cleanUpFn = [this, key]() {
-      mActiveMt.lock();
-      auto r = mActives.tryRemove(key);
-      assert(r);
-      if (mActives.isEmpty()) {
-        mActiveCv.notify_one();
-      }
-      mActiveMt.unlock();
-    };
-    auto cleanUpCo =
-        [this](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(cleanUpFn);
-    std::coroutine_handle<> handle = cleanUpCo.handle;
-    execute(handle);
-  }
-
-  template <typename T>
-  [[nodiscard]] auto blockOn(Task<T> in, io::Reactor& reactor) -> std::future<T>
-  {
-    auto promise = std::make_shared<std::promise<T>>();
-    auto future = promise->get_future();
-    if constexpr (std::is_void_v<T>) {
-      auto cleanFn = [promise, &reactor]() {
-        promise->set_value();
-        LOG_INFO("notify reactor");
-        reactor.notify();
-      };
-      auto cleanUpCo = [](Task<T> task)
-          -> DetachTask<T> { co_return co_await task; }(std::move(in)).afterDestroy(std::move(cleanFn));
-      execute(cleanUpCo.handle);
-    } else {
-      auto cleanFn = [promise, &reactor](auto&& value) {
-        promise->set_value(std::forward<T>(value));
-        LOG_INFO("notify reactor");
-        reactor.notify();
-      };
-      auto cleanUpCo = [](Task<T> task)
-          -> DetachTask<T> { co_return co_await task; }(std::move(in)).afterDestroy(std::move(cleanFn));
-      execute(cleanUpCo.handle);
-    }
-    return future;
-  }
-
   auto execute(std::coroutine_handle<> handle) -> void
   {
-    LOG_INFO("execute handle : {}", handle.address());
+    incCount();
     mGlobal.emplace(handle);
-    LOG_INFO("global size : {}", mGlobal.size());
-    mWaiting.notify_one();
+    mWaiting.notify_all();
   }
 
 private:
+  auto incCount() -> void
+  {
+    auto lk = std::scoped_lock(mDoneMt);
+    ++mHandleCount;
+  }
+  auto decCount() -> void
+  {
+    auto lk = std::scoped_lock(mDoneMt);
+    --mHandleCount;
+    if (mHandleCount == 0 && isGlobalEmpty() && isLocalsEmpty()) {
+      mDone.notify_all();
+    }
+  }
+  auto isLocalsEmpty() -> bool
+  {
+    auto lk = std::shared_lock(mLocalQueuesMt);
+    return std::all_of(mLocals.begin(), mLocals.end(), [](auto const& q) { return q->empty(); });
+  }
+  auto isGlobalEmpty() -> bool { return mGlobal.empty(); }
+
   ConcurrentQueue<std::coroutine_handle<>> mGlobal;
   std::shared_mutex mLocalQueuesMt;
   std::vector<std::shared_ptr<ConcurrentQueue<std::coroutine_handle<>>>> mLocals;
 
-  // std::atomic_bool mNotified;
-
-  std::shared_mutex mActiveMt;
-  Slab<std::coroutine_handle<>> mActives;
-  std::condition_variable_any mActiveCv;
+  std::mutex mDoneMt;
+  std::condition_variable_any mDone;
+  std::atomic_size_t mHandleCount;
 
   std::mutex mWaitingMt;
   std::condition_variable_any mWaiting;
@@ -119,12 +81,9 @@ public:
   auto acquire() -> std::coroutine_handle<>
   {
     if (auto h = mLocal->pop(); h) {
-      LOG_CRITICAL("acqure from local: {}", h->address());
       return h.value();
     } else if (auto h = mState.mGlobal.pop(); h) {
       Steal(mState.mGlobal, *mLocal);
-      LOG_INFO("steal from global : {}", h->address());
-      LOG_INFO("local size : {}", mLocal->size());
       return h.value();
     } else {
       auto lk = std::unique_lock(mState.mLocalQueuesMt);
@@ -142,7 +101,6 @@ public:
         }
         Steal(*q, *mLocal);
         if (auto h = mLocal->pop(); h) {
-          LOG_INFO("steal from other local : {}", h->address());
           return h.value();
         }
       }
@@ -155,17 +113,15 @@ public:
     while (!tok.stop_requested()) {
       auto lk = std::unique_lock(mState.mWaitingMt);
       mState.mWaiting.wait(lk, tok, [this]() { return !mState.mGlobal.empty(); });
-      LOG_INFO("wake up at: {}, global size: {}", std::this_thread::get_id(), mState.mGlobal.size());
       if (auto h = acquire(); h) {
-        LOG_INFO("resume handle : {}", h.address());
         h.resume();
+        mState.decCount();
       } else {
         continue;
       }
       // resume each handle in local queue
       while (auto h = mLocal->pop()) {
         if (h.has_value()) {
-          LOG_INFO("resume handle : {}", h.value().address());
           h.value().resume();
         } else {
           break;
@@ -185,39 +141,144 @@ private:
   std::jthread mThread;
 };
 
-class Executor {
-  friend Runner;
-
+class ThreadPool {
 public:
-  Executor() : mState()
+  ThreadPool(size_t n) : mState()
   {
-    for (int i = 0; i < 2; ++i) {
+    for (size_t i = 0; i < n; ++i) {
       auto runner = std::make_shared<Runner>(mState);
       mRunners.push_back(runner);
     }
   }
-  ~Executor() { mState.waitEmpty(); }
-
-  auto isEmpty() -> bool { return mState.isEmpty(); }
-  auto spawn(Task<> task) -> void { mState.spawn(std::move(task)); }
-  auto execute(std::coroutine_handle<> handle) -> void { return mState.execute(handle); }
+  auto execute(std::coroutine_handle<> handle) -> void { mState.execute(handle); }
   auto waitEmpty() -> void { mState.waitEmpty(); }
-  template <typename T>
-  [[nodiscard]] auto blockOn(Task<T> task, io::Reactor& reactor) -> std::future<T>
-  {
-    return mState.blockOn(std::move(task), reactor);
-  }
+  auto isEmpty() -> bool { return mState.isEmpty(); }
 
 private:
   State mState;
   std::vector<std::shared_ptr<Runner>> mRunners;
 };
 
+class MutilThreadExecutor {
+public:
+  MutilThreadExecutor(size_t n) : mPool(n) {}
+
+  auto spawn(Task<> in, io::Reactor& reactor) -> void
+  {
+    mSpawnCount.fetch_add(1, std::memory_order_acquire);
+    auto afterDoneFn = [this, &reactor]() {
+      mSpawnCount.fetch_sub(1, std::memory_order_release);
+      reactor.notify();
+    };
+    auto handle = [this](Task<> task)
+        -> DetachTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(afterDoneFn).handle;
+    mPool.execute(handle);
+  }
+
+  template <typename T>
+  [[nodiscard]] auto block(Task<T> in, io::Reactor& reactor) -> T
+  {
+    auto promise = std::make_shared<std::promise<T>>();
+    auto future = promise->get_future();
+    if constexpr (std::is_void_v<T>) {
+      auto afterDoneFn = [this, promise, &reactor]() {
+        promise->set_value();
+        reactor.notify();
+      };
+      auto handle = [](Task<T> task)
+          -> DetachTask<T> { co_return co_await task; }(std::move(in)).afterDestroy(std::move(afterDoneFn)).handle;
+      mPool.execute(handle);
+    } else {
+      auto afterDoneFn = [promise, &reactor](auto&& value) {
+        promise->set_value(std::forward<T>(value));
+        reactor.notify();
+      };
+      auto handle = [](Task<T> task) -> DetachTask<T> {
+        auto value = co_await task;
+        co_return value;
+      }(std::move(in))
+                                            .afterDestroy(std::move(afterDoneFn))
+                                            .handle;
+      mPool.execute(handle);
+    }
+
+    using namespace std::chrono_literals;
+    while (true) {
+      if (future.wait_for(0s) == std::future_status::ready) {
+        if (mSpawnCount.load(std::memory_order_acquire) == 0) {
+          LOG_CRITICAL("everything done");
+          break;
+        }
+      }
+      reactor.lock().react(std::nullopt, mPool);
+    }
+    return future.get();
+  }
+
+private:
+  std::atomic_size_t mSpawnCount;
+  ThreadPool mPool;
+};
+
+class InlineExecutor {
+public:
+  InlineExecutor() : mSpawnCount(0) {}
+
+  auto spawn(Task<> task, io::Reactor& reactor) -> void
+  {
+    mSpawnCount += 1;
+    auto afterDestroyFn = [this, &reactor]() {
+      reactor.notify();
+      mSpawnCount -= 1;
+    };
+    auto handle = [this](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
+                                             .afterDestroy(std::move(afterDestroyFn))
+                                             .handle;
+    mQueue.push(handle);
+  }
+  template <typename T>
+  auto block(Task<T> task, io::Reactor& reactor) -> T
+  {
+    auto returnValue = std::optional<T>(std::nullopt);
+    if constexpr (std::is_void_v<T>) {
+      auto afterDestroyFn = [&reactor, &returnValue]() { reactor.notify(); };
+      auto handle = [this](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
+                                               .afterDestroy(std::move(afterDestroyFn))
+                                               .handle;
+      handle.resume();
+    } else {
+      auto afterDestroyFn = [&reactor, &returnValue](T&& value) {
+        returnValue.emplace(std::move(value));
+        reactor.notify();
+      };
+      auto handle = [this](Task<T> task)
+          -> DetachTask<T> { co_return co_await task; }(std::move(task)).afterDestroy(std::move(afterDestroyFn)).handle;
+      handle.resume();
+    }
+    while (true) {
+      while (mQueue.empty()) {
+        auto handle = mQueue.front();
+        mQueue.pop();
+        handle.resume();
+      }
+      if (mSpawnCount == 0 && mQueue.empty()) {
+        break;
+      }
+      reactor.lock().react(std::nullopt, *this);
+    }
+  }
+  auto execute(std::coroutine_handle<> handle) -> void { handle.resume(); }
+
+private:
+  std::queue<std::coroutine_handle<>> mQueue;
+  size_t mSpawnCount;
+};
+
 auto constexpr DEFAULT_MAX_THREAD = 500;
 auto constexpr MIN_MAX_THREAD = 1;
 auto constexpr MAX_MAX_THREAD = 10000;
 
-class BlockingExecutor {
+class BlockingThreadPool {
 public:
   auto schedule(std::coroutine_handle<> handle) -> void
   {

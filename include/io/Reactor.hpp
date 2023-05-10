@@ -129,16 +129,13 @@ public:
     struct SleepAwaiter {
       io::Reactor* reactor;
       TimePoint when;
-      size_t id;
+      size_t id = std::numeric_limits<size_t>::max();
+      SleepAwaiter(io::Reactor* reactor, TimePoint when) : reactor(reactor), when(when) {}
       auto await_ready() const -> bool { return false; }
       auto await_suspend(std::coroutine_handle<> handle) -> void { id = reactor->insertTimer(when, handle); }
-      auto await_resume() const -> void
-      {
-        LOG_CRITICAL("after suspend, id:{}", id);
-        reactor->removeTimer(when, id);
-      }
+      auto await_resume() const -> void {}
     };
-    return SleepAwaiter {this, TimePoint::clock::now() + duration, (size_t)-1};
+    return SleepAwaiter {this, TimePoint::clock::now() + duration};
   }
   auto insertTimer(TimePoint when, std::coroutine_handle<> handle) -> size_t
   {
@@ -163,6 +160,7 @@ public:
     auto pending = std::vector<std::pair<TimePoint, size_t>> {};
     auto ready = std::vector<std::coroutine_handle<>> {};
     auto now = TimePoint::clock::now() + 1ns;
+    // TODO: split timers into ready and pending
     for (auto const& entry : mTimers) {
       if (entry.first.first <= now) {
         ready.push_back(entry.second);
