@@ -67,29 +67,33 @@ using namespace std::chrono_literals;
 #include <random>
 int main()
 {
-  auto e = io::MutilThreadExecutor {8};
+  auto e = io::InlineExecutor {};
   auto r = io::Reactor {};
   auto now = std::chrono::steady_clock::now();
   e.block(
-      [](io::MutilThreadExecutor& e, io::Reactor& r) -> Task<> {
+      [](io::InlineExecutor& e, io::Reactor& r) -> Task<> {
         e.spawn(
             [](io::Reactor& r) -> Task<> {
               LOG_CRITICAL("______ A task");
-              co_await r.sleep(7s);
+              co_await r.sleep(4s);
+              LOG_CRITICAL("______ A task end");
+              co_return;
             }(r),
             r);
         e.spawn(
             [](io::Reactor& r) -> Task<> {
               LOG_CRITICAL("______ B task");
-              co_await r.sleep(8s);
+              co_await r.sleep(7s);
+              LOG_CRITICAL("______ B task end");
+              co_return;
             }(r),
             r);
         for (int i = 0; i < 1000; i++) {
           e.spawn(
               [](int i, io::Reactor& r) -> Task<> {
-                // LOG_CRITICAL("______ C task {}", i);
-                co_await r.sleep(1000ms);
-                // co_return;
+                co_await r.sleep(8s);
+                LOG_CRITICAL("______ C task {}", i);
+                co_return;
               }(i, r),
               r);
         }
@@ -99,4 +103,5 @@ int main()
   auto done = std::chrono::steady_clock::now();
   LOG_INFO("elapsed: {}s", std::chrono::duration_cast<std::chrono::seconds>(done - now).count());
   LOG_INFO("main thread end, with return value: {}", 123);
+  // std::this_thread::sleep_for(10s);
 }

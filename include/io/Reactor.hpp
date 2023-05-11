@@ -6,6 +6,7 @@
 #include <chrono>
 #include <coroutine>
 #include <map>
+#include <queue>
 #include <span>
 
 namespace io {
@@ -141,11 +142,20 @@ public:
   {
     static auto ID_GENERATOR = std::atomic_size_t {0};
     auto id = ID_GENERATOR.fetch_add(1, std::memory_order_relaxed);
-    mTimerOps.emplace(TimerOp::Insert {id, when, handle});
+    {
+      auto lk = std::scoped_lock(mTimerOpLock);
+      mTimerOps.push(TimerOp {TimerOp::Insert {id, when, handle}});
+    }
     notify();
     return id;
   }
-  auto removeTimer(TimePoint when, size_t id) -> void { mTimerOps.emplace(TimerOp::Remove {id, when}); }
+  auto removeTimer(TimePoint when, size_t id) -> void
+  {
+    {
+      auto lk = std::scoped_lock(mTimerOpLock);
+      mTimerOps.push(TimerOp {TimerOp::Remove {id, when}});
+    }
+  }
   auto notify() -> void
   {
     if (auto r = mPoller.notify(); !r) {
@@ -190,7 +200,16 @@ public:
   auto processTimeOps(TimersType& mTimers) -> void
   {
     while (true) {
-      if (auto r = mTimerOps.pop(); r) {
+      auto value = std::optional<TimerOp>(std::nullopt);
+      {
+        auto lk = std::scoped_lock(mTimerOpLock);
+        if (mTimerOps.empty()) {
+          break;
+        }
+        value = std::move(mTimerOps.front());
+        mTimerOps.pop();
+      }
+      if (value) {
         auto fn = overloaded {
             [&](TimerOp::Insert const& op) {
               mTimers.insert({{op.when, op.key}, op.handle});
@@ -199,7 +218,7 @@ public:
               mTimers.erase({op.when, op.key});
             },
         };
-        std::visit(fn, r.value().op);
+        std::visit(fn, value.value().op);
       } else {
         break;
       }
@@ -236,7 +255,8 @@ private:
   std::mutex mTimerLock;
   TimersType mTimers;
 
-  ConcurrentQueue<TimerOp> mTimerOps;
+  std::mutex mTimerOpLock;
+  std::queue<TimerOp> mTimerOps;
 };
 
 template <typename ExecutorType>

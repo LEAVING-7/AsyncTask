@@ -53,9 +53,9 @@ private:
   }
   auto isGlobalEmpty() -> bool { return mGlobal.empty(); }
 
-  ConcurrentQueue<std::coroutine_handle<>> mGlobal;
+  spmc::ConcurrentQueue<std::coroutine_handle<>> mGlobal;
   std::shared_mutex mLocalQueuesMt;
-  std::vector<std::shared_ptr<ConcurrentQueue<std::coroutine_handle<>>>> mLocals;
+  std::vector<std::shared_ptr<spmc::ConcurrentQueue<std::coroutine_handle<>>>> mLocals;
 
   std::mutex mDoneMt;
   std::condition_variable_any mDone;
@@ -69,7 +69,7 @@ class Runner {
 public:
   Runner(State& state) : mState(state), mLocal(), mTicks(0)
   {
-    mLocal = std::make_shared<ConcurrentQueue<std::coroutine_handle<>>>();
+    mLocal = std::make_shared<spmc::ConcurrentQueue<std::coroutine_handle<>>>();
     mState.mLocalQueuesMt.lock();
     mState.mLocals.push_back(mLocal);
     mState.mLocalQueuesMt.unlock();
@@ -82,7 +82,7 @@ public:
   {
     if (auto h = mLocal->pop(); h) {
       return h.value();
-    } else if (auto h = mState.mGlobal.pop(); h) {
+    } else if (auto h = mState.mGlobal.steal(); h) {
       Steal(mState.mGlobal, *mLocal);
       return h.value();
     } else {
@@ -136,7 +136,7 @@ public:
 
 private:
   State& mState;
-  std::shared_ptr<ConcurrentQueue<std::coroutine_handle<>>> mLocal;
+  std::shared_ptr<spmc::ConcurrentQueue<std::coroutine_handle<>>> mLocal;
   std::atomic_size_t mTicks;
   std::jthread mThread;
 };
@@ -222,8 +222,7 @@ private:
 
 class InlineExecutor {
 public:
-  InlineExecutor() : mSpawnCount(0) {}
-
+  InlineExecutor() : mSpawnCount(0), mQueue() {}
   auto spawn(Task<> task, io::Reactor& reactor) -> void
   {
     mSpawnCount += 1;
@@ -236,43 +235,66 @@ public:
                                              .handle;
     mQueue.push(handle);
   }
+
   template <typename T>
+    requires(not std::is_void_v<T>)
   auto block(Task<T> task, io::Reactor& reactor) -> T
   {
     auto returnValue = std::optional<T>(std::nullopt);
-    if constexpr (std::is_void_v<T>) {
-      auto afterDestroyFn = [&reactor, &returnValue]() { reactor.notify(); };
-      auto handle = [this](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
-                                               .afterDestroy(std::move(afterDestroyFn))
-                                               .handle;
-      handle.resume();
-    } else {
-      auto afterDestroyFn = [&reactor, &returnValue](T&& value) {
-        returnValue.emplace(std::move(value));
-        reactor.notify();
-      };
-      auto handle = [this](Task<T> task)
-          -> DetachTask<T> { co_return co_await task; }(std::move(task)).afterDestroy(std::move(afterDestroyFn)).handle;
-      handle.resume();
-    }
+    auto afterDestroyFn = [&reactor, &returnValue](T&& value) {
+      returnValue.emplace(std::move(value));
+      reactor.notify();
+    };
+    auto handle = [this](Task<T> task)
+        -> DetachTask<T> { co_return co_await task; }(std::move(task)).afterDestroy(std::move(afterDestroyFn)).handle;
+    handle.resume();
+
     while (true) {
-      while (mQueue.empty()) {
+      while (!mQueue.empty()) {
         auto handle = mQueue.front();
         mQueue.pop();
         handle.resume();
       }
-      if (mSpawnCount == 0 && mQueue.empty()) {
+      if (mSpawnCount == 0 && returnValue.has_value() && mQueue.empty()) {
+        break;
+      }
+      reactor.lock().react(std::nullopt, *this);
+    }
+
+    return std::move(returnValue.value());
+  }
+  auto block(Task<> task, io::Reactor& reactor) -> void
+  {
+    auto hasValue = false;
+    auto afterDestroyFn = [&reactor, &hasValue]() {
+      hasValue = true;
+      reactor.notify();
+    };
+    auto handle = [this](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
+                                             .afterDestroy(std::move(afterDestroyFn))
+                                             .handle;
+    handle.resume();
+
+    while (true) {
+      while (!mQueue.empty()) {
+        auto handle = mQueue.front();
+        mQueue.pop();
+        handle.resume();
+      }
+      if (mSpawnCount == 0 && hasValue && mQueue.empty()) {
         break;
       }
       reactor.lock().react(std::nullopt, *this);
     }
   }
+
   auto execute(std::coroutine_handle<> handle) -> void { handle.resume(); }
 
 private:
   std::queue<std::coroutine_handle<>> mQueue;
   size_t mSpawnCount;
 };
+
 
 auto constexpr DEFAULT_MAX_THREAD = 500;
 auto constexpr MIN_MAX_THREAD = 1;
