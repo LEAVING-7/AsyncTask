@@ -1,10 +1,10 @@
 #pragma once
-#include "platform.hpp"
+#include "Async/utils/platform.hpp"
 
 #ifdef UNIX_PLATFORM
+  #include "Async/utils/predefined.hpp"
   #include <chrono>
   #include <memory>
-  #include <predefined.hpp>
   #include <sys/epoll.h>
 namespace async {
 struct Event;

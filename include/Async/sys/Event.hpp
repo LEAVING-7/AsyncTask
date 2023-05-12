@@ -1,10 +1,10 @@
 #pragma once
-#include "platform.hpp"
-#include "predefined.hpp"
+#include "Async/utils/platform.hpp"
+#include "Async/utils/predefined.hpp"
+#include "Async/utils/log.hpp"
 #include <atomic>
 #include <limits>
 
-#include "log.hpp"
 
 #ifdef UNIX_PLATFORM
   #include "Async/sys/unix/epoll.hpp"

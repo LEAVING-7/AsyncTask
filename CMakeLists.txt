@@ -24,8 +24,7 @@ file(GLOB SOURCES
 
 add_library(AsyncTask STATIC)
 target_sources(AsyncTask PRIVATE ${SOURCES})
-target_include_directories(AsyncTask 
-    PRIVATE ${CMAKE_CURRENT_LIST_DIR}/utils      
+target_include_directories(AsyncTask  
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
