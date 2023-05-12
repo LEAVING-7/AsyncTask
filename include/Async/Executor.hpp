@@ -241,13 +241,11 @@ public:
         promise->set_value(std::forward<T>(value));
         reactor.notify();
       };
-      auto handle = [](Task<T> task) -> DetachTask<T> {
+      auto newTask = [](Task<T> task) -> DetachTask<T> {
         auto value = co_await task;
         co_return value;
-      }(std::move(in))
-                                            .afterDestroy(std::move(afterDoneFn))
-                                            .handle;
-      mPool.execute(handle);
+      }(std::move(in));
+      mPool.execute(newTask.afterDestroy(std::move(afterDoneFn)).handle);
     }
 
     using namespace std::chrono_literals;

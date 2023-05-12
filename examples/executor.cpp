@@ -27,7 +27,7 @@ int main()
                 auto str = co_await e.blockSpawn([i]() -> char const* {
                   std::this_thread::sleep_for(1s);
                   LOG_INFO("wake up at :{}", i);
-                  return "fuck yeah";
+                  return "hello";
                 });
                 LOG_INFO("there: {}", str);
               }(e, r, i),
@@ -38,5 +38,5 @@ int main()
       r);
   auto done = std::chrono::steady_clock::now();
   LOG_INFO("elapsed: {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(done - now).count());
-  LOG_INFO("main thread end, with return value: {}", gCount);
+  LOG_INFO("main thread end, with return valuea: {}", gCount);
 }

@@ -1,9 +1,18 @@
 cmake_minimum_required(VERSION 3.20)
-
-project(Async)
+project(AsyncTask VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "-fsanitize=address -fcolor-diagnostics")
+
+include(FetchContent)
+macro(AddExternal target url git_tag)
+  FetchContent_Declare(
+    ${target}
+    GIT_REPOSITORY https://ghproxy.com/https://github.com/${url}
+    GIT_TAG ${git_tag}
+  )
+  FetchContent_MakeAvailable(${target})
+endmacro()
 
 file(GLOB SOURCES 
       "lib/*.cpp" 
@@ -20,23 +29,18 @@ target_include_directories(AsyncTask
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-# target_link_libraries(AsyncTask PUBLIC spdlog::spdlog)
+if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    AddExternal(spdlog; gabime/spdlog; v1.11.0)
+    target_compile_definitions(AsyncTask PUBLIC DEBUG)
+    target_link_libraries(AsyncTask PUBLIC spdlog::spdlog)
+endif()
 
-enable_testing()
+option(ASYNC_TASK_BUILD_EXAMPLES "Build examples" OFF)
+option(ASYNC_TASK_BUILD_TESTS "Build tests" OFF)
 
-include(FetchContent)
-macro(AddExternal target url git_tag)
-  FetchContent_Declare(
-    ${target}
-    GIT_REPOSITORY https://ghproxy.com/https://github.com/${url}
-    GIT_TAG ${git_tag}
-  )
-  FetchContent_MakeAvailable(${target})
-endmacro()
-
-AddExternal(spdlog; gabime/spdlog; v1.11.0)
-AddExternal(gtest; google/googletest; v1.13.0)
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-
-add_subdirectory(tests)
-add_subdirectory(examples)
+if(ASYNC_TASK_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+if(ASYNC_TASK_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
