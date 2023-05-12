@@ -1,8 +1,9 @@
 #pragma once
+#include "Async/Task.hpp"
 #include "Reactor.hpp"
 #include "Slab.hpp"
-#include "Async/Task.hpp"
 #include "log.hpp"
+#include <cassert>
 #include <concepts>
 #include <deque>
 #include <future>
@@ -10,7 +11,7 @@
 #include <random>
 #include <shared_mutex>
 
-namespace io {
+namespace async {
 class BlockingThreadPool {
 public:
   BlockingThreadPool(size_t threadLimit) : mIdleCount(0), mThreadLimits(threadLimit), mThreadCount(0) {}
@@ -209,7 +210,7 @@ class MutilThreadExecutor {
 public:
   MutilThreadExecutor(size_t n) : mPool(n) {}
 
-  auto spawnDetach(Task<> in, io::Reactor& reactor) -> void
+  auto spawnDetach(Task<> in, async::Reactor& reactor) -> void
   {
     mSpawnCount.fetch_add(1, std::memory_order_acquire);
     auto afterDoneFn = [this, &reactor]() {
@@ -222,7 +223,7 @@ public:
   }
 
   template <typename T>
-  [[nodiscard]] auto block(Task<T> in, io::Reactor& reactor) -> T
+  [[nodiscard]] auto block(Task<T> in, async::Reactor& reactor) -> T
   {
     auto promise = std::make_shared<std::promise<T>>();
     auto future = promise->get_future();
@@ -277,7 +278,7 @@ private:
 class InlineExecutor {
 public:
   InlineExecutor() : mSpawnCount(0), mQueue() {}
-  auto spawnDetach(Task<> task, io::Reactor& reactor) -> void
+  auto spawnDetach(Task<> task, async::Reactor& reactor) -> void
   {
     mSpawnCount += 1;
     auto afterDestroyFn = [this, &reactor]() {
@@ -292,7 +293,7 @@ public:
 
   template <typename T>
     requires(not std::is_void_v<T>)
-  auto block(Task<T> task, io::Reactor& reactor) -> T
+  auto block(Task<T> task, async::Reactor& reactor) -> T
   {
     auto returnValue = std::optional<T>(std::nullopt);
     auto afterDestroyFn = [&reactor, &returnValue](T&& value) {
@@ -317,7 +318,7 @@ public:
 
     return std::move(returnValue.value());
   }
-  auto block(Task<> task, io::Reactor& reactor) -> void
+  auto block(Task<> task, async::Reactor& reactor) -> void
   {
     auto hasValue = false;
     auto afterDestroyFn = [&reactor, &hasValue]() {
@@ -347,7 +348,6 @@ public:
   {
     return mBlockingExecutor.blockSpawn(std::forward<Args>(args)...);
   }
-
   auto execute(std::coroutine_handle<> handle) -> void { handle.resume(); }
 
 private:
@@ -356,4 +356,4 @@ private:
   std::queue<std::coroutine_handle<>> mQueue;
   size_t mSpawnCount;
 };
-} // namespace io
+} // namespace async

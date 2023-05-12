@@ -5,10 +5,11 @@
 #include <chrono>
 #include <coroutine>
 #include <map>
+#include <mutex>
 #include <queue>
 #include <span>
 
-namespace io {
+namespace async {
 using TimePoint = std::chrono::time_point<std::chrono::steady_clock>;
 
 struct Direction {
@@ -127,10 +128,10 @@ public:
   auto sleep(TimePoint::duration duration)
   {
     struct SleepAwaiter {
-      io::Reactor* reactor;
+      async::Reactor* reactor;
       TimePoint when;
       size_t id = std::numeric_limits<size_t>::max();
-      SleepAwaiter(io::Reactor* reactor, TimePoint when) : reactor(reactor), when(when) {}
+      SleepAwaiter(async::Reactor* reactor, TimePoint when) : reactor(reactor), when(when) {}
       auto await_ready() const -> bool { return false; }
       auto await_suspend(std::coroutine_handle<> handle) -> void { id = reactor->insertTimer(when, handle); }
       auto await_resume() const -> void {}
@@ -242,7 +243,7 @@ public:
   friend struct ReactorLock;
 
 private:
-  io::Poller mPoller;
+  async::Poller mPoller;
   std::atomic_size_t mTicker;
 
   std::mutex mSourceLock;
@@ -311,4 +312,4 @@ inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, Execu
   }
   return {};
 }
-} // namespace io
+} // namespace async

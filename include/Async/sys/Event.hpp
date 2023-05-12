@@ -10,7 +10,7 @@
   #include "Async/sys/unix/epoll.hpp"
 #endif
 
-namespace io {
+namespace async {
 static constexpr auto NOTIFY_KEY = std::numeric_limits<size_t>::max();
 struct Event {
   size_t key;
@@ -104,4 +104,4 @@ public:
   std::mutex mEventsLock;
   std::atomic_bool mNotified;
 };
-} // namespace io
+} // namespace async

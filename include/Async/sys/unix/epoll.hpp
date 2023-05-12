@@ -6,7 +6,7 @@
   #include <memory>
   #include <predefined.hpp>
   #include <sys/epoll.h>
-namespace io {
+namespace async {
 struct Event;
 enum class PollMode;
 
@@ -82,5 +82,5 @@ public:
   int mTimerFd;
 };
 } // namespace impl
-} // namespace io
+} // namespace async
 #endif

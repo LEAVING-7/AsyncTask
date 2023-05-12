@@ -8,17 +8,17 @@
   #include <sys/fcntl.h>
   #include <sys/timerfd.h>
   #include <unistd.h>
-namespace io::impl {
+namespace async::impl {
 constexpr auto ReadFlags() -> uint32_t { return EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLPRI; }
 constexpr auto WriteFlags() -> uint32_t { return EPOLLOUT | EPOLLHUP | EPOLLERR; }
 
 auto Events::Iterator::operator*() const -> Event
 {
-  return io::Event {mPtr->data.u64, (mPtr->events & ReadFlags()) != 0, (mPtr->events & WriteFlags()) != 0};
+  return async::Event {mPtr->data.u64, (mPtr->events & ReadFlags()) != 0, (mPtr->events & WriteFlags()) != 0};
 }
 auto Events::Iterator::operator->() const -> Event
 {
-  return io::Event {mPtr->data.u64, (mPtr->events & ReadFlags()) != 0, (mPtr->events & WriteFlags()) != 0};
+  return async::Event {mPtr->data.u64, (mPtr->events & ReadFlags()) != 0, (mPtr->events & WriteFlags()) != 0};
 }
   #define RE(r)                                                                                                        \
     if (!r) {                                                                                                          \
@@ -45,8 +45,8 @@ auto Poller::Create() -> StdResult<Poller>
   r = (SysCall(::timerfd_create, CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK));
   RE(r);
   poller.mTimerFd = r.value();
-  RE(poller.add(poller.mTimerFd, Event::None(io::NOTIFY_KEY), PollMode::Oneshot));
-  RE(poller.add(poller.mEventFd, Event::Readable(io::NOTIFY_KEY), PollMode::Oneshot));
+  RE(poller.add(poller.mTimerFd, Event::None(async::NOTIFY_KEY), PollMode::Oneshot));
+  RE(poller.add(poller.mEventFd, Event::Readable(async::NOTIFY_KEY), PollMode::Oneshot));
   return poller;
 }
 
@@ -124,7 +124,7 @@ auto Poller::wait(Events& events, std::optional<std::chrono::nanoseconds> timeou
         .it_value = ns_to_timespec(timeout),
     };
     RE(SysCall(::timerfd_settime, mTimerFd, 0, &newVal, nullptr));
-    RE(mod(mTimerFd, Event::Readable(io::NOTIFY_KEY), PollMode::Oneshot));
+    RE(mod(mTimerFd, Event::Readable(async::NOTIFY_KEY), PollMode::Oneshot));
   }
 
   int timeoutMs = -1;
@@ -145,7 +145,7 @@ auto Poller::wait(Events& events, std::optional<std::chrono::nanoseconds> timeou
 
   auto buf = uint64_t {0};
   (SysCall(::read, mEventFd, &buf, sizeof(buf))); // ignore error
-  RE(mod(mEventFd, Event::Readable(io::NOTIFY_KEY), PollMode::Oneshot));
+  RE(mod(mEventFd, Event::Readable(async::NOTIFY_KEY), PollMode::Oneshot));
   return {};
 }
 
@@ -188,5 +188,5 @@ auto Poller::operator=(Poller&& other) -> Poller&
   return *this;
 }
   #undef RE
-} // namespace io::impl
+} // namespace async::impl
 #endif

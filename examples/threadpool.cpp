@@ -11,8 +11,8 @@ static auto device = std::random_device {};
 int main()
 {
   auto now = std::chrono::steady_clock::now();
-  auto pool = io::ThreadPool {4};
-  // auto pool = io::BS::thread_pool_light {4};
+  auto pool = async::ThreadPool {4};
+  // auto pool = async::BS::thread_pool_light {4};
   static auto dist = std::uniform_int_distribution<> {1, 10};
   for (int i = 0; i < 10'00; i++) {
     pool.execute([]() -> Task<> {

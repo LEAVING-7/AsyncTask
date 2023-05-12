@@ -20,12 +20,11 @@ target_include_directories(AsyncTask
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-target_link_libraries(AsyncTask PUBLIC spdlog::spdlog)
+# target_link_libraries(AsyncTask PUBLIC spdlog::spdlog)
 
 enable_testing()
 
 include(FetchContent)
-
 macro(AddExternal target url git_tag)
   FetchContent_Declare(
     ${target}
