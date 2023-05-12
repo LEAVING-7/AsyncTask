@@ -11,22 +11,18 @@
     std::terminate();                                                                                                  \
   } while (0)
 
+#include <system_error>
 #include "expected.hpp"
 template <typename... Args>
 using Expected = tl::expected<Args...>;
 
 template <typename T>
 using StdResult = Expected<T, std::error_code>;
-
 using tl::make_unexpected;
-template <typename T>
-using Optional = std::optional<T>;
-
-#include <system_error>
 template <typename Fn, typename... Args>
-auto SysCall(Fn fn, Args... args) -> StdResult<std::invoke_result_t<Fn, Args...>>
+auto SysCall(Fn&& fn, Args&&... args) -> StdResult<std::invoke_result_t<Fn, Args...>>
 {
-  auto result = std::invoke(fn, args...);
+  auto result = std::invoke(fn, std::forward<Args>(args)...);
   if (result == -1) {
     return make_unexpected(std::error_code(errno, std::system_category()));
   } else {

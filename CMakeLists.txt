@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(AsyncTask VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_FLAGS "-fsanitize=address -fcolor-diagnostics")
+set(CMAKE_CXX_FLAGS "-fcolor-diagnostics")
 
 include(FetchContent)
 macro(AddExternal target url git_tag)
@@ -25,11 +25,12 @@ file(GLOB SOURCES
 add_library(AsyncTask STATIC)
 target_sources(AsyncTask PRIVATE ${SOURCES})
 target_include_directories(AsyncTask 
-    PUBLIC ${CMAKE_CURRENT_LIST_DIR}/utils      
+    PRIVATE ${CMAKE_CURRENT_LIST_DIR}/utils      
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
 if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    set(CMAKE_CXX_FLAGS "-fsanitize=address ${CMAKE_CXX_FLAGS}") 
     AddExternal(spdlog; gabime/spdlog; v1.11.0)
     target_compile_definitions(AsyncTask PUBLIC DEBUG)
     target_link_libraries(AsyncTask PUBLIC spdlog::spdlog)
