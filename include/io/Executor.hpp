@@ -12,151 +12,147 @@
 #include <shared_mutex>
 
 namespace io {
-class State {
+class BlockingThreadPool {
 public:
-  friend class Runner;
-  friend class Executor;
-
-  State() : mGlobal(), mLocalQueuesMt(), mLocals(), mWaitingMt(), mWaiting(), mHandleCount(0) {}
-
-  auto isEmpty() -> bool { return isGlobalEmpty() && isLocalsEmpty(); }
-  auto waitEmpty() -> void
+  BlockingThreadPool(size_t threadLimit) : mIdleCount(0), mThreadLimits(threadLimit), mThreadCount(0) {}
+  ~BlockingThreadPool()
   {
-    auto lk = std::unique_lock(mDoneMt);
-    mDone.wait(lk, [this]() { return mHandleCount == 0; });
+    auto lk = std::unique_lock(mQueueMt);
+    mQueueCv.wait(lk, [this]() { return mQueue.empty(); });
   }
+
   auto execute(std::coroutine_handle<> handle) -> void
   {
-    incCount();
-    mGlobal.emplace(handle);
-    mWaiting.notify_all();
+    auto lk = std::unique_lock(mQueueMt);
+    mQueue.push_back(std::move(handle));
+    mQueueCv.notify_one();
+    growPool();
+    LOG_INFO("execute task: {}", handle.address());
   }
 
 private:
-  auto incCount() -> void
+  auto loop() -> void
   {
-    auto lk = std::scoped_lock(mDoneMt);
-    ++mHandleCount;
-  }
-  auto decCount() -> void
-  {
-    auto lk = std::scoped_lock(mDoneMt);
-    --mHandleCount;
-    if (mHandleCount == 0 && isGlobalEmpty() && isLocalsEmpty()) {
-      mDone.notify_all();
-    }
-  }
-  auto isLocalsEmpty() -> bool
-  {
-    auto lk = std::shared_lock(mLocalQueuesMt);
-    return std::all_of(mLocals.begin(), mLocals.end(), [](auto const& q) { return q->empty(); });
-  }
-  auto isGlobalEmpty() -> bool { return mGlobal.empty(); }
+    using namespace std::chrono_literals;
 
-  spmc::ConcurrentQueue<std::coroutine_handle<>> mGlobal;
-  std::shared_mutex mLocalQueuesMt;
-  std::vector<std::shared_ptr<spmc::ConcurrentQueue<std::coroutine_handle<>>>> mLocals;
-
-  std::mutex mDoneMt;
-  std::condition_variable_any mDone;
-  std::atomic_size_t mHandleCount;
-
-  std::mutex mWaitingMt;
-  std::condition_variable_any mWaiting;
-};
-
-class Runner {
-public:
-  Runner(State& state) : mState(state), mLocal(), mTicks(0)
-  {
-    mLocal = std::make_shared<spmc::ConcurrentQueue<std::coroutine_handle<>>>();
-    mState.mLocalQueuesMt.lock();
-    mState.mLocals.push_back(mLocal);
-    mState.mLocalQueuesMt.unlock();
-
-    mThread = std::jthread([this](std::stop_token tok) { run(tok); });
-  }
-  ~Runner() { mThread.get_stop_source().request_stop(); }
-
-  auto acquire() -> std::coroutine_handle<>
-  {
-    if (auto h = mLocal->pop(); h) {
-      return h.value();
-    } else if (auto h = mState.mGlobal.steal(); h) {
-      Steal(mState.mGlobal, *mLocal);
-      return h.value();
-    } else {
-      auto lk = std::unique_lock(mState.mLocalQueuesMt);
-
-      auto n = mState.mLocals.size();
-      static auto rd = std::random_device();
-      auto idst = std::uniform_int_distribution<size_t>(0, n);
-      auto start = idst(rd);
-
-      for (size_t i = 0; i < n * 2; ++i) {
-        auto idx = (start + i) % n;
-        auto& q = mState.mLocals[idx];
-        if (q == mLocal) {
-          continue;
-        }
-        Steal(*q, *mLocal);
-        if (auto h = mLocal->pop(); h) {
-          return h.value();
-        }
+    LOG_INFO("new thread spawned: {}", std::this_thread::get_id());
+    auto lk = std::unique_lock(mQueueMt);
+    while (true) {
+      mIdleCount -= 1;
+      while (!mQueue.empty()) {
+        growPool();
+        auto task = std::move(mQueue.front());
+        mQueue.pop_front();
+        lk.unlock();
+        LOG_INFO("resume task at: {}", std::this_thread::get_id());
+        task.resume();
+        lk.lock();
       }
-    }
-    return {nullptr};
-  }
-
-  auto run(std::stop_token tok) -> void
-  {
-    while (!tok.stop_requested()) {
-      auto lk = std::unique_lock(mState.mWaitingMt);
-      mState.mWaiting.wait(lk, tok, [this]() { return !mState.mGlobal.empty(); });
-      if (auto h = acquire(); h) {
-        h.resume();
-        mState.decCount();
-      } else {
-        continue;
-      }
-      // resume each handle in local queue
-      while (auto h = mLocal->pop()) {
-        if (h.has_value()) {
-          h.value().resume();
-        } else {
-          break;
-        }
-      }
-      auto ticks = mTicks.fetch_add(1);
-      if (ticks % 64 == 0) {
-        Steal(mState.mGlobal, *mLocal);
+      mIdleCount += 1;
+      auto r = mQueueCv.wait_for(lk, 500ms);
+      if (r == std::cv_status::timeout && mQueue.empty()) {
+        mIdleCount -= 1;
+        mThreadCount -= 1;
+        break;
       }
     }
   }
 
-private:
-  State& mState;
-  std::shared_ptr<spmc::ConcurrentQueue<std::coroutine_handle<>>> mLocal;
-  std::atomic_size_t mTicks;
-  std::jthread mThread;
+  auto growPool() -> void
+  {
+    assert(!mQueueMt.try_lock());
+    while (mQueue.size() > mIdleCount * 5 && mThreadCount < mThreadLimits) {
+      mThreadCount += 1;
+      mIdleCount += 1;
+      mQueueCv.notify_all();
+      std::thread([this]() { loop(); }).detach();
+    }
+  }
+
+  std::mutex mQueueMt;
+  std::condition_variable mQueueCv;
+  std::deque<std::coroutine_handle<>> mQueue;
+
+  size_t mIdleCount;
+  size_t mThreadCount;
+  size_t mThreadLimits;
 };
 
 class ThreadPool {
 public:
-  ThreadPool(size_t n) : mState()
+  ThreadPool(size_t threadCount) : mThreadCount(threadCount), mThreads(std::make_unique<std::thread[]>(threadCount))
   {
-    for (size_t i = 0; i < n; ++i) {
-      auto runner = std::make_shared<Runner>(mState);
-      mRunners.push_back(runner);
-    }
+    create_threads();
   }
-  auto execute(std::coroutine_handle<> handle) -> void { mState.execute(handle); }
-  auto waitEmpty() -> void { mState.waitEmpty(); }
-  auto isEmpty() -> bool { return mState.isEmpty(); }
+  ~ThreadPool()
+  {
+    waitEmpty();
+    destroy_threads();
+  }
+  auto execute(std::coroutine_handle<> handle) -> void
+  {
+    {
+      auto lk = std::scoped_lock(mTaskMt);
+      mTasks.push(std::move(handle));
+    }
+    ++mTaskTotal;
+    mTaskAvailableCV.notify_one();
+  }
+  void waitEmpty()
+  {
+    mWaiting = true;
+    std::unique_lock<std::mutex> tasks_lock(mTaskMt);
+    mTaskDoneCV.wait(tasks_lock, [this] { return (mTaskTotal == 0); });
+    mWaiting = false;
+  }
 
 private:
-  State mState;
-  std::vector<std::shared_ptr<Runner>> mRunners;
+  auto create_threads() -> void
+  {
+    mRunning = true;
+    for (size_t i = 0; i < mThreadCount; ++i) {
+      mThreads[i] = std::thread(&ThreadPool::worker, this);
+    }
+  }
+
+  auto destroy_threads() -> void
+  {
+    mRunning = false;
+    mTaskAvailableCV.notify_all();
+    for (size_t i = 0; i < mThreadCount; ++i) {
+      mThreads[i].join();
+    }
+  }
+
+  auto worker() -> void
+  {
+    while (mRunning) {
+      std::function<void()> task;
+      std::unique_lock<std::mutex> tasks_lock(mTaskMt);
+      mTaskAvailableCV.wait(tasks_lock, [this] { return !mTasks.empty() || !mRunning; });
+      if (mRunning) {
+        task = std::move(mTasks.front());
+        mTasks.pop();
+        tasks_lock.unlock();
+        task();
+        tasks_lock.lock();
+        --mTaskTotal;
+        if (mWaiting) {
+          mTaskDoneCV.notify_one();
+        }
+      }
+    }
+  }
+
+  std::atomic_bool mRunning = false;
+  std::condition_variable mTaskAvailableCV = {};
+  std::condition_variable mTaskDoneCV = {};
+  std::queue<std::coroutine_handle<>> mTasks = {};
+  std::atomic_size_t mTaskTotal = 0;
+  mutable std::mutex mTaskMt = {};
+  size_t mThreadCount = 0;
+  std::unique_ptr<std::thread[]> mThreads = nullptr;
+  std::atomic_bool mWaiting = false;
 };
 
 class MutilThreadExecutor {
@@ -180,7 +176,8 @@ public:
   {
     auto promise = std::make_shared<std::promise<T>>();
     auto future = promise->get_future();
-    if constexpr (std::is_void_v<T>) {
+
+    if constexpr (std::is_void_v<T>) { // return void
       auto afterDoneFn = [this, promise, &reactor]() {
         promise->set_value();
         reactor.notify();
@@ -206,7 +203,6 @@ public:
     while (true) {
       if (future.wait_for(0s) == std::future_status::ready) {
         if (mSpawnCount.load(std::memory_order_acquire) == 0) {
-          LOG_CRITICAL("everything done");
           break;
         }
       }
@@ -215,7 +211,56 @@ public:
     return future.get();
   }
 
+  auto blockSpawn(Task<> task, io::Reactor& r)
+  {
+    std::call_once(mBlockingPoolFlag, [this]() { mBlockingPool = std::make_unique<BlockingThreadPool>(500); });
+    struct Awaiter {
+      MutilThreadExecutor& e;
+      Reactor& r;
+      Task<> task;
+      auto await_ready() -> bool { return false; }
+      auto await_suspend(std::coroutine_handle<> handle) -> void
+      {
+        auto continueHandle = [](MutilThreadExecutor& e, Reactor& r, Task<> task) -> ContinueTask {
+          task.resume();
+          co_return;
+        }(e, r, std::move(task))
+                                                                                         .setContinue(handle)
+                                                                                         .handle;
+        e.mBlockingPool->execute(continueHandle);
+      }
+      auto await_resume() -> void {}
+    };
+    return Awaiter {*this, r, std::move(task)};
+  }
+  template <typename T>
+  auto blockSpawn(Task<T> task, io::Reactor& r)
+  {
+    std::call_once(mBlockingPoolFlag, [this]() { mBlockingPool = std::make_unique<BlockingThreadPool>(500); });
+    struct Awaiter {
+      MutilThreadExecutor& e;
+      Reactor& r;
+      Task<> task;
+      auto await_ready() -> bool { return false; }
+      auto await_suspend(std::coroutine_handle<> handle) -> void
+      {
+        auto continueHandle = [](MutilThreadExecutor& e, Reactor& r, Task<> task) -> ContinueTask {
+          e.block(std::move(task), r);
+          co_return;
+        }(e, r, std::move(task))
+                                                                                         .setContinue(handle)
+                                                                                         .handle;
+        e.mBlockingPool->execute(continueHandle);
+      }
+      auto await_resume() -> T {}
+    };
+    return Awaiter {*this, r, std::move(task)};
+  }
+
 private:
+  std::once_flag mBlockingPoolFlag;
+  std::unique_ptr<BlockingThreadPool> mBlockingPool {nullptr};
+
   std::atomic_size_t mSpawnCount;
   ThreadPool mPool;
 };
@@ -227,8 +272,8 @@ public:
   {
     mSpawnCount += 1;
     auto afterDestroyFn = [this, &reactor]() {
-      reactor.notify();
       mSpawnCount -= 1;
+      reactor.notify();
     };
     auto handle = [this](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
                                              .afterDestroy(std::move(afterDestroyFn))
@@ -293,65 +338,5 @@ public:
 private:
   std::queue<std::coroutine_handle<>> mQueue;
   size_t mSpawnCount;
-};
-
-
-auto constexpr DEFAULT_MAX_THREAD = 500;
-auto constexpr MIN_MAX_THREAD = 1;
-auto constexpr MAX_MAX_THREAD = 10000;
-
-class BlockingThreadPool {
-public:
-  auto schedule(std::coroutine_handle<> handle) -> void
-  {
-    auto lk = std::unique_lock(mMt);
-    mQueue.push_back(std::move(handle));
-    mCv.notify_one();
-    growPool();
-  }
-
-private:
-  auto threadLoop() -> void
-  {
-    using namespace std::chrono_literals;
-    auto lk = std::unique_lock(mMt);
-    while (true) {
-      mIdleCount -= 1;
-      while (!mQueue.empty()) {
-        growPool();
-        auto task = std::move(mQueue.front());
-        mQueue.pop_front();
-        lk.unlock();
-        task.resume();
-        lk.lock();
-      }
-      mIdleCount += 1;
-      auto r = mCv.wait_for(lk, 500ms);
-      if (r == std::cv_status::timeout && mQueue.empty()) {
-        mIdleCount -= 1;
-        mThreadCount -= 1;
-        break;
-      }
-    }
-  }
-
-  auto growPool() -> void
-  {
-    assert(!mMt.try_lock());
-    while (mQueue.size() > mIdleCount * 5 && mThreadCount < mThreadLimits) {
-      mThreadCount += 1;
-      mIdleCount += 1;
-      mCv.notify_all();
-      std::thread([this]() { threadLoop(); }).detach();
-    }
-  }
-
-  std::mutex mMt;
-  std::condition_variable mCv;
-
-  size_t mIdleCount;
-  size_t mThreadCount;
-  std::deque<std::coroutine_handle<>> mQueue;
-  size_t mThreadLimits;
 };
 } // namespace io

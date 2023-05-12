@@ -1,7 +1,6 @@
 #pragma once
 #include "ConcurrentQueue.hpp"
 #include "Slab.hpp"
-#include "platform.hpp"
 #include "sys/Event.hpp"
 #include <chrono>
 #include <coroutine>
@@ -141,7 +140,7 @@ public:
   auto insertTimer(TimePoint when, std::coroutine_handle<> handle) -> size_t
   {
     static auto ID_GENERATOR = std::atomic_size_t {0};
-    auto id = ID_GENERATOR.fetch_add(1, std::memory_order_relaxed);
+    auto id = ID_GENERATOR.fetch_add(1, std::memory_order_acquire);
     {
       auto lk = std::scoped_lock(mTimerOpLock);
       mTimerOps.push(TimerOp {TimerOp::Insert {id, when, handle}});
@@ -186,9 +185,9 @@ public:
                                  [](auto const& a, auto const& b) { return a.first < b.first; });
       if (it != pending.end()) {
         duration = (it->first - now).count() < 0 ? 0ns : it->first - now;
-      } else {
-        duration = 0ns;
       }
+    } else {
+      duration = 0ns;
     }
     lk.unlock();
     for (auto const handle : ready) {
@@ -274,8 +273,6 @@ inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, Execu
   } else if (!timeout && nextTimer) {
     waitTimeout.emplace(nextTimer.value());
   }
-
-  auto tick = reactor.mTicker.fetch_add(1) + 1;
   reactor.mEvents.clear();
   if (auto r = reactor.mPoller.wait(reactor.mEvents, waitTimeout); r) {
     if (r.value() == 0) {

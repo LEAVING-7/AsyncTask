@@ -102,12 +102,13 @@ auto Poller::del(int fd) -> StdResult<void>
   return {};
 }
 
-timespec ns_to_timespec(std::optional<std::chrono::nanoseconds>& ns)
+static timespec ns_to_timespec(std::optional<std::chrono::nanoseconds>& ns)
 {
+  using namespace std::chrono_literals;
   timespec ts;
-  if (ns.has_value()) {
+  if (ns.has_value() && ns.value().count() > 0) {
     ts.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(ns.value()).count();
-    ts.tv_nsec = (ns.value() % std::chrono::seconds(1)).count();
+    ts.tv_nsec = ns.value().count() - ts.tv_sec * (1s).count();
   } else {
     ts.tv_sec = 0;
     ts.tv_nsec = 0;
@@ -130,6 +131,10 @@ auto Poller::wait(Events& events, std::optional<std::chrono::nanoseconds> timeou
   if (timeout) {
     if (mTimerFd == -1) {
       timeoutMs = std::chrono::duration_cast<std::chrono::milliseconds>(timeout.value()).count();
+    } else {
+      if (timeout->count() == 0) {
+        timeoutMs = 0;
+      }
     }
   }
   auto r = SysCall(::epoll_wait, mEpollFd, events.data.get(), Events::MAX_EVENTS, timeoutMs);

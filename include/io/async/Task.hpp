@@ -232,3 +232,39 @@ struct DetachTask<void> {
   };
   coroutine_handle_type handle {nullptr};
 };
+
+struct ContinueTask {
+  struct promise_type;
+  using coroutine_handle_type = std::coroutine_handle<promise_type>;
+
+  struct FinalAwaiter {
+    auto await_ready() noexcept -> bool { return false; }
+    auto await_resume() noexcept -> void {}
+    auto await_suspend(std::coroutine_handle<promise_type> in) noexcept -> std::coroutine_handle<>
+    {
+      if (in.promise().continueHandle) {
+        return in.promise().continueHandle;
+      } else {
+        return std::noop_coroutine();
+      }
+    }
+  };
+
+  struct promise_type {
+    std::exception_ptr exceptionPtr;
+    std::coroutine_handle<> continueHandle {nullptr};
+
+    auto get_return_object() -> ContinueTask { return ContinueTask {coroutine_handle_type::from_promise(*this)}; }
+    auto initial_suspend() noexcept -> std::suspend_always { return {}; }
+    auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
+    auto return_void() -> void {}
+    auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
+  };
+  explicit ContinueTask(coroutine_handle_type in) : handle(in) {}
+  auto setContinue(std::coroutine_handle<> in) -> ContinueTask
+  {
+    handle.promise().continueHandle = in;
+    return *this;
+  };
+  coroutine_handle_type handle {nullptr};
+};

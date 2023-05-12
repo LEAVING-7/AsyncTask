@@ -63,45 +63,35 @@ using namespace std::chrono_literals;
 //   executor.waitEmpty();
 //   LOG_INFO("main thread exit");
 // }
+std::atomic_size_t gCount = 0;
 
 #include <random>
 int main()
 {
-  auto e = io::InlineExecutor {};
+  auto e = io::MutilThreadExecutor {8};
   auto r = io::Reactor {};
   auto now = std::chrono::steady_clock::now();
   e.block(
-      [](io::InlineExecutor& e, io::Reactor& r) -> Task<> {
-        e.spawn(
-            [](io::Reactor& r) -> Task<> {
-              LOG_CRITICAL("______ A task");
-              co_await r.sleep(4s);
-              LOG_CRITICAL("______ A task end");
-              co_return;
-            }(r),
-            r);
-        e.spawn(
-            [](io::Reactor& r) -> Task<> {
-              LOG_CRITICAL("______ B task");
-              co_await r.sleep(7s);
-              LOG_CRITICAL("______ B task end");
-              co_return;
-            }(r),
-            r);
-        for (int i = 0; i < 1000; i++) {
+      [](io::MutilThreadExecutor& e, io::Reactor& r) -> Task<> {
+        for (int i = 0; i < 30; i++) {
           e.spawn(
-              [](int i, io::Reactor& r) -> Task<> {
-                co_await r.sleep(8s);
-                LOG_CRITICAL("______ C task {}", i);
+              [](io::Reactor& r, io::MutilThreadExecutor& e, int i) -> Task<> {
+                co_await r.sleep(4s);
+                e.spawn(
+                    [](io::Reactor& r) -> Task<> {
+                      co_await r.sleep(1s);
+                      gCount += 1;
+                      co_return;
+                    }(r),
+                    r);
                 co_return;
-              }(i, r),
+              }(r, e, i),
               r);
         }
         co_return;
       }(e, r),
       r);
   auto done = std::chrono::steady_clock::now();
-  LOG_INFO("elapsed: {}s", std::chrono::duration_cast<std::chrono::seconds>(done - now).count());
-  LOG_INFO("main thread end, with return value: {}", 123);
-  // std::this_thread::sleep_for(10s);
+  LOG_INFO("elapsed: {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(done - now).count());
+  LOG_INFO("main thread end, with return value: {}", gCount);
 }

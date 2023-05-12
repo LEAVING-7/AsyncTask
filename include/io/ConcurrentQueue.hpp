@@ -78,14 +78,14 @@ inline constexpr std::size_t hardware_destructive_interference_size = 2 * sizeof
 // a FIFO queue. All threads must have finished using the deque before it is destructed. T must be
 // default initializable, trivially destructible and have nothrow move constructor/assignment operators.
 template <Simple T>
-class ConcurrentQueue {
+class Queue {
 public:
   // Constructs the deque with a given capacity the capacity of the deque (must be power of 2)
-  explicit ConcurrentQueue(std::int64_t cap = 1024);
+  explicit Queue(std::int64_t cap = 1024);
 
   // Move/Copy is not supported
-  ConcurrentQueue(ConcurrentQueue const& other) = delete;
-  ConcurrentQueue& operator=(ConcurrentQueue const& other) = delete;
+  Queue(Queue const& other) = delete;
+  Queue& operator=(Queue const& other) = delete;
 
   //  Query the size at instance of call
   std::size_t size() const noexcept;
@@ -111,7 +111,7 @@ public:
   std::optional<T> steal() noexcept;
 
   // Destruct the deque, all threads must have finished using the deque.
-  ~ConcurrentQueue() noexcept;
+  ~Queue() noexcept;
 
 private:
   alignas(hardware_destructive_interference_size) std::atomic<std::int64_t> _top;
@@ -129,13 +129,13 @@ private:
 };
 
 template <Simple T>
-ConcurrentQueue<T>::ConcurrentQueue(std::int64_t cap) : _top(0), _bottom(0), _buffer(new detail::RingBuff<T> {cap})
+Queue<T>::Queue(std::int64_t cap) : _top(0), _bottom(0), _buffer(new detail::RingBuff<T> {cap})
 {
   _garbage.reserve(32);
 }
 
 template <Simple T>
-std::size_t ConcurrentQueue<T>::size() const noexcept
+std::size_t Queue<T>::size() const noexcept
 {
   int64_t b = _bottom.load(relaxed);
   int64_t t = _top.load(relaxed);
@@ -143,20 +143,20 @@ std::size_t ConcurrentQueue<T>::size() const noexcept
 }
 
 template <Simple T>
-int64_t ConcurrentQueue<T>::cap() const noexcept
+int64_t Queue<T>::cap() const noexcept
 {
   return _buffer.load(relaxed)->capacity();
 }
 
 template <Simple T>
-bool ConcurrentQueue<T>::empty() const noexcept
+bool Queue<T>::empty() const noexcept
 {
   return !size();
 }
 
 template <Simple T>
 template <typename... Args>
-void ConcurrentQueue<T>::emplace(Args&&... args)
+void Queue<T>::emplace(Args&&... args)
 {
   // Construct before acquiring slot in-case constructor throws
   T object {std::forward<Args>(args)...};
@@ -180,7 +180,7 @@ void ConcurrentQueue<T>::emplace(Args&&... args)
 }
 
 template <Simple T>
-std::optional<T> ConcurrentQueue<T>::pop() noexcept
+std::optional<T> Queue<T>::pop() noexcept
 {
   std::int64_t b = _bottom.load(relaxed) - 1;
   detail::RingBuff<T>* buf = _buffer.load(relaxed);
@@ -213,7 +213,7 @@ std::optional<T> ConcurrentQueue<T>::pop() noexcept
 }
 
 template <Simple T>
-std::optional<T> ConcurrentQueue<T>::steal() noexcept
+std::optional<T> Queue<T>::steal() noexcept
 {
   std::int64_t t = _top.load(acquire);
   std::atomic_thread_fence(seq_cst);
@@ -241,16 +241,19 @@ std::optional<T> ConcurrentQueue<T>::steal() noexcept
 }
 
 template <Simple T>
-ConcurrentQueue<T>::~ConcurrentQueue() noexcept
+Queue<T>::~Queue() noexcept
 {
   delete _buffer.load();
 }
 template <typename T>
-auto Steal(ConcurrentQueue<T>& src, ConcurrentQueue<T>& dst) -> bool
+auto Steal(Queue<T>& src, Queue<T>& dst) -> bool
 {
+  if (src.size() < dst.size()) {
+    return false;
+  }
   auto count = (src.size() + 1) / 2;
   if (count > 0) {
-    if (dst.cap()) {
+    if (dst.cap() != 0) {
       count = std::min(count, dst.cap() - dst.size());
     }
     for (auto i = 0; i < count; ++i) {
