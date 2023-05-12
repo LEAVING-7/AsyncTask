@@ -1,5 +1,5 @@
+#include <Async/Slab.hpp>
 #include <gtest/gtest.h>
-#include <io/Slab.hpp>
 
 TEST(SlabTest, InsertGetRemoveOne)
 {

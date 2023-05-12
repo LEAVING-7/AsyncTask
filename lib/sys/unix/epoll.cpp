@@ -1,8 +1,8 @@
-#include "io/sys/unix/epoll.hpp"
+#include "Async/sys/unix/epoll.hpp"
 #ifdef UNIX_PLATFORM
   #include "log.hpp"
 
-  #include <io/sys/Event.hpp>
+  #include <Async/sys/Event.hpp>
   #include <sys/epoll.h>
   #include <sys/eventfd.h>
   #include <sys/fcntl.h>
@@ -143,7 +143,7 @@ auto Poller::wait(Events& events, std::optional<std::chrono::nanoseconds> timeou
   }
   events.len = r.value();
 
-  auto buf = u64 {0};
+  auto buf = uint64_t {0};
   (SysCall(::read, mEventFd, &buf, sizeof(buf))); // ignore error
   RE(mod(mEventFd, Event::Readable(io::NOTIFY_KEY), PollMode::Oneshot));
   return {};
@@ -151,7 +151,7 @@ auto Poller::wait(Events& events, std::optional<std::chrono::nanoseconds> timeou
 
 auto Poller::notify() -> StdResult<void>
 {
-  u64 num = 1ull;
+  uint64_t num = 1ull;
   RE(SysCall(::write, mEventFd, &num, sizeof(num)));
   return {};
 }

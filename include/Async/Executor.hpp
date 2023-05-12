@@ -1,8 +1,7 @@
 #pragma once
-#include "ConcurrentQueue.hpp"
 #include "Reactor.hpp"
 #include "Slab.hpp"
-#include "async/Task.hpp"
+#include "Async/Task.hpp"
 #include "log.hpp"
 #include <concepts>
 #include <deque>
@@ -27,15 +26,12 @@ public:
     mQueue.push_back(std::move(handle));
     mQueueCv.notify_one();
     growPool();
-    LOG_INFO("execute task: {}", handle.address());
   }
 
 private:
   auto loop() -> void
   {
     using namespace std::chrono_literals;
-
-    LOG_INFO("new thread spawned: {}", std::this_thread::get_id());
     auto lk = std::unique_lock(mQueueMt);
     while (true) {
       mIdleCount -= 1;
@@ -44,7 +40,6 @@ private:
         auto task = std::move(mQueue.front());
         mQueue.pop_front();
         lk.unlock();
-        LOG_INFO("resume task at: {}", std::this_thread::get_id());
         task.resume();
         lk.lock();
       }
@@ -76,6 +71,61 @@ private:
   size_t mIdleCount;
   size_t mThreadCount;
   size_t mThreadLimits;
+};
+
+template <typename ExecutorType>
+class BlockingExecutor {
+public:
+  template <std::invocable Fn, typename... Args>
+  auto blockSpawn(Fn&& fn, Args&&... args)
+  {
+    std::call_once(mBlockingPoolFlag, [this]() { mBlockingPool = std::make_unique<BlockingThreadPool>(500); });
+    using Result = std::invoke_result_t<Fn, Args...>;
+    auto function = std::bind_front(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    if constexpr (std::is_void_v<Result>) {
+      struct Awaiter {
+        BlockingExecutor<ExecutorType>& e;
+        decltype(function) fn;
+        auto await_ready() -> bool { return false; }
+        auto await_suspend(std::coroutine_handle<> in) -> void
+        {
+          auto task = [](std::invocable auto&& fn) -> ContinueTask {
+            fn();
+            co_return;
+          }(std::move(fn));
+          e.execute(task.setContinue(in).handle);
+        }
+        auto await_resume() -> Result { return; }
+      };
+      return Awaiter {*this, std::move(function)};
+    } else {
+      struct Awaiter {
+        BlockingExecutor<ExecutorType>& e;
+        decltype(function) fn;
+        std::optional<Result> result;
+        auto await_ready() -> bool { return false; }
+        auto await_suspend(std::coroutine_handle<> in) -> void
+        {
+          auto task = [this](std::invocable auto&& fn) -> ContinueTask {
+            this->result = std::move(fn());
+            co_return;
+          }(std::move(fn));
+          e.execute(task.setContinue(in).handle);
+        }
+        auto await_resume() -> Result
+        {
+          assert(result.has_value());
+          return std::move(result.value());
+        }
+      };
+      return Awaiter {*this, std::move(function)};
+    }
+  }
+  auto execute(std::coroutine_handle<> handle) -> void { mBlockingPool->execute(handle); }
+
+protected:
+  std::once_flag mBlockingPoolFlag;
+  std::unique_ptr<BlockingThreadPool> mBlockingPool {nullptr};
 };
 
 class ThreadPool {
@@ -159,7 +209,7 @@ class MutilThreadExecutor {
 public:
   MutilThreadExecutor(size_t n) : mPool(n) {}
 
-  auto spawn(Task<> in, io::Reactor& reactor) -> void
+  auto spawnDetach(Task<> in, io::Reactor& reactor) -> void
   {
     mSpawnCount.fetch_add(1, std::memory_order_acquire);
     auto afterDoneFn = [this, &reactor]() {
@@ -211,55 +261,14 @@ public:
     return future.get();
   }
 
-  auto blockSpawn(Task<> task, io::Reactor& r)
+  template <typename... Args>
+  auto blockSpawn(Args&&... args)
   {
-    std::call_once(mBlockingPoolFlag, [this]() { mBlockingPool = std::make_unique<BlockingThreadPool>(500); });
-    struct Awaiter {
-      MutilThreadExecutor& e;
-      Reactor& r;
-      Task<> task;
-      auto await_ready() -> bool { return false; }
-      auto await_suspend(std::coroutine_handle<> handle) -> void
-      {
-        auto continueHandle = [](MutilThreadExecutor& e, Reactor& r, Task<> task) -> ContinueTask {
-          task.resume();
-          co_return;
-        }(e, r, std::move(task))
-                                                                                         .setContinue(handle)
-                                                                                         .handle;
-        e.mBlockingPool->execute(continueHandle);
-      }
-      auto await_resume() -> void {}
-    };
-    return Awaiter {*this, r, std::move(task)};
-  }
-  template <typename T>
-  auto blockSpawn(Task<T> task, io::Reactor& r)
-  {
-    std::call_once(mBlockingPoolFlag, [this]() { mBlockingPool = std::make_unique<BlockingThreadPool>(500); });
-    struct Awaiter {
-      MutilThreadExecutor& e;
-      Reactor& r;
-      Task<> task;
-      auto await_ready() -> bool { return false; }
-      auto await_suspend(std::coroutine_handle<> handle) -> void
-      {
-        auto continueHandle = [](MutilThreadExecutor& e, Reactor& r, Task<> task) -> ContinueTask {
-          e.block(std::move(task), r);
-          co_return;
-        }(e, r, std::move(task))
-                                                                                         .setContinue(handle)
-                                                                                         .handle;
-        e.mBlockingPool->execute(continueHandle);
-      }
-      auto await_resume() -> T {}
-    };
-    return Awaiter {*this, r, std::move(task)};
+    return mBlockingExecutor.blockSpawn(std::forward<Args>(args)...);
   }
 
 private:
-  std::once_flag mBlockingPoolFlag;
-  std::unique_ptr<BlockingThreadPool> mBlockingPool {nullptr};
+  BlockingExecutor<MutilThreadExecutor> mBlockingExecutor;
 
   std::atomic_size_t mSpawnCount;
   ThreadPool mPool;
@@ -268,7 +277,7 @@ private:
 class InlineExecutor {
 public:
   InlineExecutor() : mSpawnCount(0), mQueue() {}
-  auto spawn(Task<> task, io::Reactor& reactor) -> void
+  auto spawnDetach(Task<> task, io::Reactor& reactor) -> void
   {
     mSpawnCount += 1;
     auto afterDestroyFn = [this, &reactor]() {
@@ -333,9 +342,17 @@ public:
     }
   }
 
+  template <typename... Args>
+  auto blockSpawn(Args&&... args)
+  {
+    return mBlockingExecutor.blockSpawn(std::forward<Args>(args)...);
+  }
+
   auto execute(std::coroutine_handle<> handle) -> void { handle.resume(); }
 
 private:
+  BlockingExecutor<InlineExecutor> mBlockingExecutor;
+
   std::queue<std::coroutine_handle<>> mQueue;
   size_t mSpawnCount;
 };

@@ -1,8 +1,5 @@
-add_executable(poller poller.cpp)
-target_link_libraries(poller io)
-
 add_executable(threadpool threadpool.cpp)
-target_link_libraries(threadpool io)
+target_link_libraries(threadpool AsyncTask)
 
 add_executable(executor executor.cpp)
-target_link_libraries(executor io)
+target_link_libraries(executor AsyncTask)

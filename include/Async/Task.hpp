@@ -243,7 +243,10 @@ struct ContinueTask {
     auto await_suspend(std::coroutine_handle<promise_type> in) noexcept -> std::coroutine_handle<>
     {
       if (in.promise().continueHandle) {
-        return in.promise().continueHandle;
+        auto handle = in.promise().continueHandle;
+        assert(in.done());
+        in.destroy();
+        return handle;
       } else {
         return std::noop_coroutine();
       }
@@ -260,6 +263,7 @@ struct ContinueTask {
     auto return_void() -> void {}
     auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
   };
+
   explicit ContinueTask(coroutine_handle_type in) : handle(in) {}
   auto setContinue(std::coroutine_handle<> in) -> ContinueTask
   {

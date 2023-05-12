@@ -1,37 +1,26 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(io)
+project(Async)
 
 set(CMAKE_CXX_STANDARD 20)
-
 set(CMAKE_CXX_FLAGS "-fsanitize=address -fcolor-diagnostics")
 
 file(GLOB SOURCES 
       "lib/*.cpp" 
-      "lib/net/*.cpp" 
       "lib/sys/*.cpp" 
       "lib/sys/unix/*.cpp" 
       "lib/sys/win/*.cpp" 
       "lib/utils/*.cpp"
-      "lib/async/*.cpp"
 )
 
-add_library(io STATIC)
-target_sources(io PRIVATE ${SOURCES})
-target_include_directories(io 
+add_library(AsyncTask STATIC)
+target_sources(AsyncTask PRIVATE ${SOURCES})
+target_include_directories(AsyncTask 
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/utils      
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-if(WIN32)
-    target_link_libraries(io ws2_32)
-endif()
-
-target_link_libraries(io PUBLIC spdlog::spdlog)
-
-
-add_executable(draft draft/draft.cpp)
-target_link_libraries(draft io)
+target_link_libraries(AsyncTask PUBLIC spdlog::spdlog)
 
 enable_testing()
 
@@ -49,7 +38,6 @@ endmacro()
 AddExternal(spdlog; gabime/spdlog; v1.11.0)
 AddExternal(gtest; google/googletest; v1.13.0)
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-
 
 add_subdirectory(tests)
 add_subdirectory(examples)
