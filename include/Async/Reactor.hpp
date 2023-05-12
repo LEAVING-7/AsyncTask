@@ -125,18 +125,50 @@ public:
     auto event = e->get()->getEvent();
     return mPoller.mod(source.fd, event);
   }
-  auto sleep(TimePoint::duration duration)
+  [[nodiscard]] auto sleep(TimePoint::duration duration)
   {
-    struct SleepAwaiter {
-      async::Reactor* reactor;
+    struct SleepAwaiter : public std::suspend_always {
+      SleepAwaiter(async::Reactor* reactor, TimePoint when) : reactor(reactor), when(when) {}
+      Reactor* reactor;
       TimePoint when;
       size_t id = std::numeric_limits<size_t>::max();
-      SleepAwaiter(async::Reactor* reactor, TimePoint when) : reactor(reactor), when(when) {}
-      auto await_ready() const -> bool { return false; }
       auto await_suspend(std::coroutine_handle<> handle) -> void { id = reactor->insertTimer(when, handle); }
-      auto await_resume() const -> void {}
     };
     return SleepAwaiter {this, TimePoint::clock::now() + duration};
+  }
+  [[nodiscard]] auto readable(std::shared_ptr<Source> source)
+  {
+    struct ReadableAwaiter : public std::suspend_always {
+      ReadableAwaiter(Reactor* reactor, std::shared_ptr<Source> source) : reactor(reactor), source(source) {}
+      Reactor* reactor;
+      std::shared_ptr<Source> source;
+      auto await_suspend(std::coroutine_handle<> handle) -> void
+      {
+        if (source->setReadable(handle)) {
+          reactor->updateIo(*source);
+        } else {
+          assert(0 && "already readable");
+        }
+      }
+    };
+    return ReadableAwaiter {this, source};
+  }
+  [[nodiscard]] auto writable(std::shared_ptr<Source> source)
+  {
+    struct WriteableAwaiter : public std::suspend_always {
+      WriteableAwaiter(Reactor* reactor, std::shared_ptr<Source> source) : reactor(reactor), source(source) {}
+      Reactor* reactor;
+      std::shared_ptr<Source> source;
+      auto await_suspend(std::coroutine_handle<> handle) -> void
+      {
+        if (source->setWritable(handle)) {
+          reactor->updateIo(*source);
+        } else {
+          assert(0 && "already writeable");
+        }
+      }
+    };
+    return WriteableAwaiter {this, source};
   }
   auto insertTimer(TimePoint when, std::coroutine_handle<> handle) -> size_t
   {
