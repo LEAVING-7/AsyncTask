@@ -2,7 +2,10 @@ cmake_minimum_required(VERSION 3.20)
 project(AsyncTask VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_FLAGS "-fcolor-diagnostics")
+
+if(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
+  set(CMAKE_CXX_FLAGS "-fcolor-diagnostics ${CMAKE_CXX_FLAGS}")
+endif()
 
 include(FetchContent)
 macro(AddExternal target url git_tag)
