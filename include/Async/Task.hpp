@@ -183,7 +183,7 @@ struct DetachTask {
     auto get_return_object() -> DetachTask { return DetachTask {coroutine_handle_type::from_promise(*this)}; }
     auto initial_suspend() noexcept -> std::suspend_always { return {}; }
     auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
-    auto return_value(T&& in) -> void { value = std::forward<T>(in); }
+    auto return_value(T in) -> void { value = std::forward<T>(in); }
     auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
   };
   explicit DetachTask(coroutine_handle_type in) : handle(in) {}
