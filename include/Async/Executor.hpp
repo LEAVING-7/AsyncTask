@@ -205,9 +205,9 @@ private:
   std::atomic_bool mWaiting = false;
 };
 
-class MutilThreadExecutor {
+class MultiThreadExecutor {
 public:
-  MutilThreadExecutor(size_t n) : mPool(n) {}
+  MultiThreadExecutor(size_t n) : mPool(n) {}
 
   auto spawnDetach(Task<> in, async::Reactor& reactor) -> void
   {
@@ -266,7 +266,7 @@ public:
   }
 
 private:
-  BlockingExecutor<MutilThreadExecutor> mBlockingExecutor;
+  BlockingExecutor<MultiThreadExecutor> mBlockingExecutor;
 
   std::atomic_size_t mSpawnCount;
   ThreadPool mPool;
