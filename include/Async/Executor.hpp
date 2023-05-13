@@ -177,14 +177,13 @@ private:
   auto worker() -> void
   {
     while (mRunning) {
-      std::function<void()> task;
       std::unique_lock<std::mutex> tasks_lock(mTaskMt);
       mTaskAvailableCV.wait(tasks_lock, [this] { return !mTasks.empty() || !mRunning; });
       if (mRunning) {
-        task = std::move(mTasks.front());
+        auto handle = std::move(mTasks.front());
         mTasks.pop();
         tasks_lock.unlock();
-        task();
+        handle.resume();
         tasks_lock.lock();
         --mTaskTotal;
         if (mWaiting) {

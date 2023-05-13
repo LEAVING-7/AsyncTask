@@ -12,15 +12,16 @@
 namespace async {
 using TimePoint = std::chrono::time_point<std::chrono::steady_clock>;
 
-struct Direction {
-  // size_t tick;
-  std::coroutine_handle<> handle {nullptr};
-
-  auto takeHandle() -> std::coroutine_handle<> { return std::exchange(handle, nullptr); }
-  auto isEmpty() const -> bool { return handle == nullptr; }
-};
-
 struct Source {
+  class Direction {
+    friend class Source;
+    // size_t tick;
+    std::coroutine_handle<> handle {nullptr};
+
+    auto takeHandle() -> std::coroutine_handle<> { return std::exchange(handle, nullptr); }
+    auto isEmpty() const -> bool { return handle == nullptr; }
+  };
+
   struct State {
     Direction read;
     Direction write;
@@ -34,7 +35,7 @@ struct Source {
   State state;
   auto setReadable(std::coroutine_handle<> handle) -> bool
   {
-    auto lk = std::unique_lock {stateLock};
+    auto lk = std::scoped_lock {stateLock};
     if (state.read.isEmpty()) {
       state.read.handle = handle;
       return true;
@@ -43,16 +44,26 @@ struct Source {
   }
   auto setWritable(std::coroutine_handle<> handle) -> bool
   {
-    auto lk = std::unique_lock {stateLock};
+    auto lk = std::scoped_lock {stateLock};
     if (state.write.isEmpty()) {
       state.write.handle = handle;
       return true;
     }
     return false;
   }
+  auto takeRedable() -> std::coroutine_handle<>
+  {
+    auto lk = std::scoped_lock {stateLock};
+    return state.read.takeHandle();
+  }
+  auto takeWritable() -> std::coroutine_handle<>
+  {
+    auto lk = std::scoped_lock {stateLock};
+    return state.write.takeHandle();
+  }
   auto getEvent() -> Event
   {
-    auto lk = std::unique_lock {stateLock};
+    auto lk = std::scoped_lock {stateLock};
     auto event = Event::None(key);
     if (!state.read.isEmpty()) {
       event.readable = true;
@@ -316,14 +327,10 @@ inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, Execu
       auto lk = std::unique_lock {reactor.mSourceLock};
       for (auto const& ev : reactor.mEvents) {
         if (auto ptr = reactor.mSources.get(ev.key); ptr) {
-          auto stateLk = std::unique_lock {ptr->get()->stateLock};
-          auto& state = ptr->get()->state;
-          if (ev.writable) {
-            // state.write.tick = tick;
-            handles.push_back(state.write.takeHandle());
-          } else if (ev.readable) {
-            // state.read.tick = tick;
-            handles.push_back(state.read.takeHandle());
+          if (ev.readable) {
+            handles.push_back(ptr->get()->takeRedable());
+          } else if (ev.writable) {
+            handles.push_back(ptr->get()->takeWritable());
           }
         }
       }
