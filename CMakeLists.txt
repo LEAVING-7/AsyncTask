@@ -11,7 +11,7 @@ include(FetchContent)
 macro(AddExternal target url git_tag)
   FetchContent_Declare(
     ${target}
-    GIT_REPOSITORY https://ghproxy.com/https://github.com/${url}
+    GIT_REPOSITORY https://github.com/${url}
     GIT_TAG ${git_tag}
   )
   FetchContent_MakeAvailable(${target})
