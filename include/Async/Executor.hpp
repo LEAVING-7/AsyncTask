@@ -1,7 +1,7 @@
 #pragma once
-#include "Async/Task.hpp"
 #include "Async/Reactor.hpp"
 #include "Async/Slab.hpp"
+#include "Async/Task.hpp"
 #include <cassert>
 #include <concepts>
 #include <deque>
@@ -9,6 +9,7 @@
 #include <queue>
 #include <random>
 #include <shared_mutex>
+#include <source_location>
 
 namespace async {
 class BlockingThreadPool {
@@ -141,6 +142,9 @@ public:
   }
   auto execute(std::coroutine_handle<> handle) -> void
   {
+    if (handle == nullptr) {
+      return;
+    }
     {
       auto lk = std::scoped_lock(mTaskMt);
       mTasks.push(std::move(handle));
