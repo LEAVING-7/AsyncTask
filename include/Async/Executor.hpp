@@ -14,7 +14,7 @@
 namespace async {
 class BlockingThreadPool {
 public:
-  BlockingThreadPool(size_t threadLimit) : mIdleCount(0), mThreadLimits(threadLimit), mThreadCount(0) {}
+  BlockingThreadPool(size_t threadLimit) : mIdleCount(0), mThreadCount(0), mThreadLimits(threadLimit) {}
   ~BlockingThreadPool()
   {
     auto lk = std::unique_lock(mQueueMt);
@@ -219,7 +219,7 @@ public:
       mSpawnCount.fetch_sub(1, std::memory_order_release);
       reactor.notify();
     };
-    auto handle = [this](Task<> task)
+    auto handle = [](Task<> task)
         -> DetachTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(afterDoneFn).handle;
     mPool.execute(handle);
   }
@@ -277,7 +277,7 @@ private:
 
 class InlineExecutor {
 public:
-  InlineExecutor() : mSpawnCount(0), mQueue() {}
+  InlineExecutor() : mQueue(), mSpawnCount(0) {}
   auto spawnDetach(Task<> task, async::Reactor& reactor) -> void
   {
     mSpawnCount += 1;
@@ -285,7 +285,7 @@ public:
       mSpawnCount -= 1;
       reactor.notify();
     };
-    auto handle = [this](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
+    auto handle = [](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
                                              .afterDestroy(std::move(afterDestroyFn))
                                              .handle;
     mQueue.push(handle);
@@ -325,7 +325,7 @@ public:
       hasValue = true;
       reactor.notify();
     };
-    auto handle = [this](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
+    auto handle = [](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
                                              .afterDestroy(std::move(afterDestroyFn))
                                              .handle;
     handle.resume();

@@ -33,9 +33,7 @@ target_include_directories(AsyncTask
 
 if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "-fsanitize=address ${CMAKE_CXX_FLAGS}") 
-    AddExternal(spdlog; gabime/spdlog; v1.11.0)
     target_compile_definitions(AsyncTask PUBLIC DEBUG)
-    target_link_libraries(AsyncTask PUBLIC spdlog::spdlog)
 endif()
 
 option(ASYNC_TASK_BUILD_EXAMPLES "Build examples" OFF)

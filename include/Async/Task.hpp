@@ -6,6 +6,7 @@
 #include <functional>
 #include <utility>
 
+namespace async {
 template <typename T = void>
 class Task;
 
@@ -272,3 +273,4 @@ struct ContinueTask {
   };
   coroutine_handle_type handle {nullptr};
 };
+} // namespace async

@@ -1,7 +1,6 @@
 #pragma once
 #include "Async/utils/platform.hpp"
 #include "Async/utils/predefined.hpp"
-#include "Async/utils/log.hpp"
 #include <atomic>
 #include <limits>
 

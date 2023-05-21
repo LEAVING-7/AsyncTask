@@ -16,7 +16,8 @@
 template <typename... Args>
 using Expected = tl::expected<Args...>;
 
-template <typename T>
+
+template <typename T = void>
 using StdResult = Expected<T, std::error_code>;
 using tl::make_unexpected;
 template <typename Fn, typename... Args>

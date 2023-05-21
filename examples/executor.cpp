@@ -10,12 +10,11 @@ int main()
   auto r = async::Reactor {};
   auto now = std::chrono::steady_clock::now();
   e.block(
-      [](async::InlineExecutor& e, async::Reactor& r) -> Task<> {
+      [](async::InlineExecutor& e, async::Reactor& r) -> async::Task<> {
         e.spawnDetach(
-            [](async::Reactor& r) -> Task<> {
+            [](async::Reactor& r) -> async::Task<> {
               for (int i = 0; i < 10; i++) {
                 co_await r.sleep(1s);
-                LOG_INFO("hi");
               }
               co_return;
             }(r),
@@ -23,13 +22,11 @@ int main()
 
         for (int i = 0; i < 10; i++) {
           e.spawnDetach(
-              [](async::InlineExecutor& e, async::Reactor& r, int i) -> Task<> {
+              [](async::InlineExecutor& e, async::Reactor& r, int i) -> async::Task<> {
                 auto str = co_await e.blockSpawn([i]() -> char const* {
                   std::this_thread::sleep_for(1s);
-                  LOG_INFO("wake up at :{}", i);
                   return "hello";
                 });
-                LOG_INFO("there: {}", str);
               }(e, r, i),
               r);
         }
@@ -37,6 +34,4 @@ int main()
       }(e, r),
       r);
   auto done = std::chrono::steady_clock::now();
-  LOG_INFO("elapsed: {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(done - now).count());
-  LOG_INFO("main thread end, with return valuea: {}", gCount);
 }
