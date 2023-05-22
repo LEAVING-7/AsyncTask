@@ -36,7 +36,7 @@ enum class PollMode {
 
 class Poller {
 public:
-  Poller() : mNotified(false), mEventsLock(), mEvents()
+  Poller() : mEvents(), mEventsLock(), mNotified(false)
   {
     auto r = impl::Poller::Create();
     assert(r.has_value());

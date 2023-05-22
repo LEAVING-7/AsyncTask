@@ -1,7 +1,5 @@
 #include "Async/sys/unix/epoll.hpp"
 #ifdef UNIX_PLATFORM
-  #include "Async/utils/log.hpp"
-
   #include <Async/sys/Event.hpp>
   #include <sys/epoll.h>
   #include <sys/eventfd.h>
