@@ -25,7 +25,7 @@ file(GLOB SOURCES
       "lib/utils/*.cpp"
 )
 
-add_library(AsyncTask STATIC)
+add_library(AsyncTask OBJECT)
 target_sources(AsyncTask PRIVATE ${SOURCES})
 target_include_directories(AsyncTask  
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include

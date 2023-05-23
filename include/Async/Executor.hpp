@@ -133,12 +133,12 @@ class ThreadPool {
 public:
   ThreadPool(size_t threadCount) : mThreadCount(threadCount), mThreads(std::make_unique<std::thread[]>(threadCount))
   {
-    create_threads();
+    createThreads();
   }
   ~ThreadPool()
   {
     waitEmpty();
-    destroy_threads();
+    destroyThreads();
   }
   auto execute(std::coroutine_handle<> handle) -> void
   {
@@ -161,7 +161,7 @@ public:
   }
 
 private:
-  auto create_threads() -> void
+  auto createThreads() -> void
   {
     mRunning = true;
     for (size_t i = 0; i < mThreadCount; ++i) {
@@ -169,7 +169,7 @@ private:
     }
   }
 
-  auto destroy_threads() -> void
+  auto destroyThreads() -> void
   {
     mRunning = false;
     mTaskAvailableCV.notify_all();
@@ -286,8 +286,8 @@ public:
       reactor.notify();
     };
     auto handle = [](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
-                                             .afterDestroy(std::move(afterDestroyFn))
-                                             .handle;
+                                         .afterDestroy(std::move(afterDestroyFn))
+                                         .handle;
     mQueue.push(handle);
   }
 
@@ -326,8 +326,8 @@ public:
       reactor.notify();
     };
     auto handle = [](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
-                                             .afterDestroy(std::move(afterDestroyFn))
-                                             .handle;
+                                         .afterDestroy(std::move(afterDestroyFn))
+                                         .handle;
     handle.resume();
 
     while (true) {

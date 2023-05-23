@@ -15,7 +15,7 @@ using TimePoint = std::chrono::time_point<std::chrono::steady_clock>;
 
 struct Source {
   class Direction {
-    friend class Source;
+    friend struct Source;
     // size_t tick;
     std::coroutine_handle<> handle {nullptr};
 
@@ -52,7 +52,8 @@ struct Source {
     }
     return false;
   }
-  auto takeRedable() -> std::coroutine_handle<>
+
+  auto takeReadable() -> std::coroutine_handle<>
   {
     auto lk = std::scoped_lock {stateLock};
     return state.read.takeHandle();
@@ -329,7 +330,7 @@ inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, Execu
       for (auto const& ev : reactor.mEvents) {
         if (auto ptr = reactor.mSources.get(ev.key); ptr) {
           if (ev.readable) {
-            handles.push_back(ptr->get()->takeRedable());
+            handles.push_back(ptr->get()->takeReadable());
           } else if (ev.writable) {
             handles.push_back(ptr->get()->takeWritable());
           }

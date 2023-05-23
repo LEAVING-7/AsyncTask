@@ -49,7 +49,7 @@ public:
   auto add(int fd, Event ev, PollMode mode) -> StdResult<void>
   {
     if (ev.key == NOTIFY_KEY) {
-      return make_unexpected(std::make_error_code(std::errc::invalid_argument));
+      return make_unexpected(std::errc::invalid_argument);
     } else {
       return mPoller.add(fd, ev, mode);
     }
@@ -58,7 +58,7 @@ public:
   auto mod(int fd, Event ev, PollMode mode) -> StdResult<void>
   {
     if (ev.key == NOTIFY_KEY) {
-      return make_unexpected(std::make_error_code(std::errc::invalid_argument));
+      return make_unexpected(std::errc::invalid_argument);
     } else {
       return mPoller.mod(fd, ev, mode);
     }
