@@ -17,7 +17,7 @@ macro(AddExternal target url git_tag)
   FetchContent_MakeAvailable(${target})
 endmacro()
 
-file(GLOB SOURCES 
+file(GLOB AsyncTask_SOURCE 
       "lib/*.cpp" 
       "lib/sys/*.cpp" 
       "lib/sys/unix/*.cpp" 
@@ -25,8 +25,8 @@ file(GLOB SOURCES
       "lib/utils/*.cpp"
 )
 
-add_library(AsyncTask OBJECT)
-target_sources(AsyncTask PRIVATE ${SOURCES})
+add_library(AsyncTask STATIC)
+target_sources(AsyncTask PRIVATE ${AsyncTask_SOURCE})
 target_include_directories(AsyncTask  
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
 )
@@ -36,12 +36,12 @@ if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
     target_compile_definitions(AsyncTask PUBLIC DEBUG)
 endif()
 
-option(ASYNC_TASK_BUILD_EXAMPLES "Build examples" OFF)
-option(ASYNC_TASK_BUILD_TESTS "Build tests" OFF)
+option(AsyncTask_BUILD_EXAMPLES "Build examples" OFF)
+option(AsyncTask_BUILD_TESTS "Build tests" OFF)
 
-if(ASYNC_TASK_BUILD_EXAMPLES)
+if(AsyncTask_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
-if(ASYNC_TASK_BUILD_TESTS)
+if(AsyncTask_BUILD_TESTS)
     add_subdirectory(tests)
 endif()

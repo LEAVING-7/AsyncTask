@@ -1,7 +1,5 @@
 #pragma once
-#include "Async/utils/platform.hpp"
-
-#ifdef UNIX_PLATFORM
+#ifdef __linux__
   #include "Async/utils/predefined.hpp"
   #include <chrono>
   #include <memory>

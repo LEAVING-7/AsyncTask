@@ -1,11 +1,10 @@
 #pragma once
-#include "Async/utils/platform.hpp"
 #include "Async/utils/predefined.hpp"
 #include <atomic>
 #include <limits>
 
 
-#ifdef UNIX_PLATFORM
+#ifdef __linux__
   #include "Async/sys/unix/epoll.hpp"
 #endif
 
@@ -42,6 +41,7 @@ public:
     assert(r.has_value());
     mPoller = std::move(r.value());
   };
+  ~Poller() = default;
   constexpr auto supportEdge() const -> bool { return mPoller.supportEdge(); }
   constexpr auto supportLevel() const -> bool { return mPoller.supportLevel(); }
 
