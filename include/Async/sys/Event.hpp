@@ -1,8 +1,8 @@
 #pragma once
 #include "Async/utils/predefined.hpp"
 #include <atomic>
+#include <cstring>
 #include <limits>
-
 
 #ifdef __linux__
   #include "Async/sys/unix/epoll.hpp"
@@ -67,6 +67,7 @@ public:
 
   auto wait(std::vector<Event>& events, std::optional<std::chrono::nanoseconds> timeout) -> StdResult<size_t>
   {
+
     auto t = mEventsLock.try_lock();
     if (t) {
       auto r = mPoller.wait(mEvents, timeout);

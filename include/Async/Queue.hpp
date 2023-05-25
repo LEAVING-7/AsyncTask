@@ -1,4 +1,4 @@
-/* #pragma once
+#pragma once
 #include <atomic>
 #include <cassert>
 #include <concepts>
@@ -15,7 +15,7 @@
 // Work-Stealing for Weak Memory Models," and "Dynamic Circular Work-Stealing Deque". Both are
 // available in 'reference/'.
 
-namespace spmc {
+namespace async::spmc {
 template <typename T>
 concept Simple = std::default_initializable<T> && std::is_trivially_destructible_v<T>;
 
@@ -266,5 +266,98 @@ auto Steal(Queue<T>& src, Queue<T>& dst) -> bool
   }
   return true;
 }
-} // namespace spmc
- */
+} // namespace async::spmc
+#include <condition_variable>
+#include <mutex>
+#include <queue>
+namespace async::mpmc {
+template <typename T>
+class Queue {
+public:
+  Queue() = default;
+  void push(T&& item)
+  {
+    {
+      auto lk = std::scoped_lock(mMutex);
+      mQueue.push(std::move(item));
+    }
+    mCond.notify_one();
+  }
+  auto tryPush(T const& item) -> bool
+  {
+    {
+      auto lk = std::unique_lock(mMutex, std::try_to_lock);
+      if (!lk) {
+        return false;
+      }
+      mQueue.push(item);
+    }
+    mCond.notify_one();
+    return true;
+  }
+
+  auto pop(T& item) -> bool
+  {
+    auto lk = std::unique_lock(mMutex);
+    mCond.wait(lk, [this] { return !mQueue.empty() || mStop; });
+    if (mStop && mQueue.empty()) {
+      return false;
+    }
+    item = std::move(mQueue.front());
+    mQueue.pop();
+    return true;
+  }
+  auto tryPop(T& item) -> bool
+  {
+    auto lk = std::unique_lock(mMutex, std::try_to_lock);
+    if (!lk || mQueue.empty()) {
+      return false;
+    }
+    item = std::move(mQueue.front());
+    mQueue.pop();
+    return true;
+  }
+  auto tryPopIf(T& item, bool (&pred)(T&) = nullptr)
+  {
+    auto lk = std::unique_lock(mMutex, std::try_to_lock);
+    if (!lk || mQueue.empty()) {
+      return false;
+    }
+    if (pred && !pred(mQueue.front())) {
+      return false;
+    }
+    item = std::move(mQueue.front());
+    mQueue.pop();
+    return true;
+  }
+  auto size() const -> size_t
+  {
+    auto lk = std::scoped_lock(mMutex);
+    return mQueue.size();
+  }
+  auto empty() const -> bool
+  {
+    auto lk = std::scoped_lock(mMutex);
+    return mQueue.empty();
+  }
+  auto stop() -> void
+  {
+    {
+      auto lk = std::scoped_lock(mMutex);
+      mStop = true;
+    }
+    mCond.notify_all();
+  }
+  auto waitEmpty() -> void
+  {
+    auto lk = std::unique_lock(mMutex);
+    mCond.wait(lk, [this] { return mQueue.empty(); });
+  }
+
+private:
+  std::queue<T> mQueue;
+  bool mStop = false;
+  mutable std::mutex mMutex;
+  std::condition_variable mCond;
+};
+} // namespace async::mpmc

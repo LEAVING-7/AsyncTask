@@ -149,40 +149,6 @@ public:
     };
     return SleepAwaiter {this, TimePoint::clock::now() + duration};
   }
-  [[nodiscard]] auto readable(std::shared_ptr<Source> source)
-  {
-    struct ReadableAwaiter : public std::suspend_always {
-      ReadableAwaiter(Reactor* reactor, std::shared_ptr<Source> source) : reactor(reactor), source(source) {}
-      Reactor* reactor;
-      std::shared_ptr<Source> source;
-      auto await_suspend(std::coroutine_handle<> handle) -> void
-      {
-        if (source->setReadable(handle)) {
-          reactor->updateIo(*source);
-        } else {
-          assert(0 && "already readable");
-        }
-      }
-    };
-    return ReadableAwaiter {this, source};
-  }
-  [[nodiscard]] auto writable(std::shared_ptr<Source> source)
-  {
-    struct WriteableAwaiter : public std::suspend_always {
-      WriteableAwaiter(Reactor* reactor, std::shared_ptr<Source> source) : reactor(reactor), source(source) {}
-      Reactor* reactor;
-      std::shared_ptr<Source> source;
-      auto await_suspend(std::coroutine_handle<> handle) -> void
-      {
-        if (source->setWritable(handle)) {
-          reactor->updateIo(*source);
-        } else {
-          assert(0 && "already writeable");
-        }
-      }
-    };
-    return WriteableAwaiter {this, source};
-  }
   auto insertTimer(TimePoint when, std::coroutine_handle<> handle) -> size_t
   {
     static auto ID_GENERATOR = std::atomic_size_t {0};

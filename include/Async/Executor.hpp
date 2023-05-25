@@ -1,4 +1,5 @@
 #pragma once
+#include "Async/Queue.hpp"
 #include "Async/Reactor.hpp"
 #include "Async/Slab.hpp"
 #include "Async/Task.hpp"
@@ -133,12 +134,19 @@ class ThreadPool {
 public:
   ThreadPool(size_t threadCount) : mThreadCount(threadCount), mThreads(std::make_unique<std::thread[]>(threadCount))
   {
-    createThreads();
+    mRunning = true;
+    for (size_t i = 0; i < mThreadCount; ++i) {
+      mThreads[i] = std::thread(&ThreadPool::worker, this);
+    }
   }
   ~ThreadPool()
   {
     waitEmpty();
-    destroyThreads();
+    mRunning = false;
+    mTaskAvailableCV.notify_all();
+    for (size_t i = 0; i < mThreadCount; ++i) {
+      mThreads[i].join();
+    }
   }
   auto execute(std::coroutine_handle<> handle) -> void
   {
@@ -161,23 +169,6 @@ public:
   }
 
 private:
-  auto createThreads() -> void
-  {
-    mRunning = true;
-    for (size_t i = 0; i < mThreadCount; ++i) {
-      mThreads[i] = std::thread(&ThreadPool::worker, this);
-    }
-  }
-
-  auto destroyThreads() -> void
-  {
-    mRunning = false;
-    mTaskAvailableCV.notify_all();
-    for (size_t i = 0; i < mThreadCount; ++i) {
-      mThreads[i].join();
-    }
-  }
-
   auto worker() -> void
   {
     while (mRunning) {
@@ -206,6 +197,99 @@ private:
   size_t mThreadCount = 0;
   std::unique_ptr<std::thread[]> mThreads = nullptr;
   std::atomic_bool mWaiting = false;
+};
+// TODO not efficient enough
+class StealingThreadPool {
+public:
+  StealingThreadPool(size_t threadNum) : mQueues(threadNum), mThreads(), mThreadNum(threadNum), mStop(false)
+  {
+    mThreads.reserve(threadNum);
+    for (auto i = 0; i < threadNum; ++i) {
+      mThreads.emplace_back(&StealingThreadPool::worker, this, i);
+    }
+  }
+  ~StealingThreadPool()
+  {
+    mStop.exchange(true);
+    for (auto& queue : mQueues) {
+      queue.stop();
+    }
+    for (auto& thread : mThreads) {
+      thread.join();
+    }
+  }
+  auto execute(std::coroutine_handle<> handle) -> void
+  {
+    if (handle == nullptr) {
+      return;
+    }
+    if (mStop) {
+      return;
+    }
+    auto r = std::rand() % mThreadNum;
+    for (auto n = r; n < mThreadNum * 2; ++n) {
+      if (mQueues[(n) % mThreadNum].tryPush(handle)) {
+        return;
+      }
+    }
+  }
+  auto pendingSize() const -> size_t
+  {
+    size_t size = 0;
+    for (auto& queue : mQueues) {
+      size += queue.size();
+    }
+    return size;
+  }
+
+private:
+  auto worker(size_t id) -> void
+  {
+    auto localData = getLocal();
+    localData.id = id;
+    localData.pool = this;
+    while (true) {
+      auto handle = std::coroutine_handle<>();
+      // steal
+      for (auto n = 0; n < mThreadNum * 2; ++n) {
+        if (mQueues[(id + n) % mThreadNum].tryPop(handle)) {
+          break;
+        }
+      }
+      if (handle == nullptr && !mQueues[id].pop(handle)) {
+        if (mStop.load()) {
+          break;
+        } else {
+          continue;
+        }
+      }
+      if (handle != nullptr) {
+        handle.resume();
+      }
+    }
+  }
+  struct LocalData {
+    constexpr inline static auto InvalidId = std::numeric_limits<size_t>::max();
+    size_t id {InvalidId};
+    StealingThreadPool* pool {nullptr};
+  };
+  auto getLocal() const -> LocalData&
+  {
+    static thread_local auto data = LocalData();
+    return data;
+  }
+  auto getCurrentId() const -> size_t
+  {
+    auto data = getLocal();
+    if (data.pool != this) {
+      return data.id;
+    }
+    return LocalData::InvalidId;
+  }
+  std::vector<mpmc::Queue<std::coroutine_handle<>>> mQueues;
+  std::vector<std::thread> mThreads;
+  int32_t mThreadNum;
+  std::atomic_bool mStop;
 };
 
 class MultiThreadExecutor {
@@ -339,6 +423,7 @@ public:
       if (mSpawnCount == 0 && hasValue && mQueue.empty()) {
         break;
       }
+      puts("react");
       reactor.lock().react(std::nullopt, *this);
     }
   }

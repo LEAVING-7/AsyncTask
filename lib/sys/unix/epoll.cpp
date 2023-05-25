@@ -106,16 +106,18 @@ static timespec ns_to_timespec(std::optional<std::chrono::nanoseconds>& ns)
   timespec ts;
   if (ns.has_value() && ns.value().count() > 0) {
     ts.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(ns.value()).count();
-    ts.tv_nsec = ns.value().count() - ts.tv_sec * (1s).count();
+    ts.tv_nsec = (ns.value() - (ts.tv_sec * (1s))).count();
   } else {
     ts.tv_sec = 0;
     ts.tv_nsec = 0;
   }
+  std::cout << "ts: " << ts.tv_sec << " " << ts.tv_nsec << "\n";
   return ts;
 }
 
 auto Poller::wait(Events& events, std::optional<std::chrono::nanoseconds> timeout) -> StdResult<void>
 {
+
   if (mTimerFd != -1) {
     auto newVal = itimerspec {
         .it_interval = {.tv_sec = 0, .tv_nsec = 0},

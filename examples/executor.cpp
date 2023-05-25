@@ -11,27 +11,18 @@ int main()
   auto now = std::chrono::steady_clock::now();
   e.block(
       [](async::InlineExecutor& e, async::Reactor& r) -> async::Task<> {
-        e.spawnDetach(
-            [](async::Reactor& r) -> async::Task<> {
-              for (int i = 0; i < 10; i++) {
-                co_await r.sleep(1s);
-              }
-              co_return;
-            }(r),
-            r);
-
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 10'000; i++) {
           e.spawnDetach(
-              [](async::InlineExecutor& e, async::Reactor& r, int i) -> async::Task<> {
-                auto str = co_await e.blockSpawn([i]() -> char const* {
-                  std::this_thread::sleep_for(1s);
-                  return "hello";
-                });
-              }(e, r, i),
+              [](async::Reactor& r) -> async::Task<> {
+                co_await r.sleep(1min);
+                co_return;
+              }(r),
               r);
         }
+        puts("done");
         co_return;
       }(e, r),
       r);
   auto done = std::chrono::steady_clock::now();
+  std::cout << "time elapse " << std::chrono::duration_cast<std::chrono::seconds>(done - now) << '\n';
 }
