@@ -251,6 +251,55 @@ public:
     return ReactorLock {*this, std::move(eventLock)};
   }
 
+  template <typename ExecutorType>
+  auto react(std::optional<TimePoint::duration> timeout, ExecutorType& e) -> StdResult<void>
+  {
+    using namespace std::chrono_literals;
+    auto handles = std::vector<std::coroutine_handle<>> {};
+
+    auto nextTimer = processTimers(handles);
+    auto waitTimeout = std::optional<TimePoint::duration> {std::nullopt};
+    if (timeout && !nextTimer) {
+      waitTimeout.emplace(timeout.value());
+    } else if (timeout && nextTimer) {
+      waitTimeout.emplace(std::min(timeout.value(), nextTimer.value()));
+    } else if (!timeout && nextTimer) {
+      waitTimeout.emplace(nextTimer.value());
+    }
+    mEvents.clear();
+    if (auto r = mPoller.wait(mEvents, waitTimeout); r) {
+      if (r.value() == 0) {
+        if (*waitTimeout != 0s) {
+          processTimers(handles);
+        }
+      } else {
+        auto lk = std::unique_lock {mSourceLock};
+        for (auto const& ev : mEvents) {
+          if (auto ptr = mSources.get(ev.key); ptr) {
+            if (ev.readable) {
+              handles.push_back(ptr->get()->takeReadable());
+            } else if (ev.writable) {
+              handles.push_back(ptr->get()->takeWritable());
+            }
+          }
+        }
+      }
+    } else if (r.error() == std::errc::interrupted) {
+      for (auto handle : handles) {
+        e.execute(handle);
+      }
+      return make_unexpected(r.error());
+    } else {
+      for (auto handle : handles) {
+        e.execute(handle);
+      }
+      return make_unexpected(r.error());
+    }
+    for (auto handle : handles) {
+      e.execute(handle);
+    }
+    return {};
+  }
   friend struct ReactorLock;
 
 private:
@@ -307,7 +356,7 @@ inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, Execu
     for (auto handle : handles) {
       e.execute(handle);
     }
-    return make_unexpected(r.error());
+     return {};
   } else {
     for (auto handle : handles) {
       e.execute(handle);

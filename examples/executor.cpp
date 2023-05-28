@@ -1,28 +1,37 @@
 #include "Async/Executor.hpp"
+#include "Async/Primitives.h"
 #include "Async/Task.hpp"
 using namespace std::chrono_literals;
 
-std::atomic_size_t gCount = 0;
 #include <random>
 int main()
 {
-  auto e = async::InlineExecutor {};
-  auto r = async::Reactor {};
+  auto static e = async::MultiThreadExecutor {4};
+  auto static r = async::Reactor {};
+  auto static number = 0;
   auto now = std::chrono::steady_clock::now();
+  auto static mt = async::Mutex(e);
   e.block(
-      [](async::InlineExecutor& e, async::Reactor& r) -> async::Task<> {
-        for (int i = 0; i < 10'000; i++) {
+      []() -> async::Task<> {
+        for (int i = 0; i < 1'000'000; i++) { // 一亿
           e.spawnDetach(
-              [](async::Reactor& r) -> async::Task<> {
-                co_await r.sleep(1min);
+              [](async::Reactor& r, int i) -> async::Task<> {
+                co_await mt.lock();
+                number += 1;
+                if (number % 1000 == 0) {
+                  std::cout << number << '\n';
+                }
+                mt.unlock();
                 co_return;
-              }(r),
+              }(r, i),
               r);
         }
         puts("done");
         co_return;
-      }(e, r),
+      }(),
       r);
   auto done = std::chrono::steady_clock::now();
-  std::cout << "time elapse " << std::chrono::duration_cast<std::chrono::seconds>(done - now) << '\n';
+  std::cout << "time elapse " << std::chrono::duration_cast<std::chrono::milliseconds>(done - now) << '\n';
+  // 20694ms
+  std::cout << number << '\n';
 }

@@ -31,12 +31,12 @@ target_include_directories(AsyncTask
     PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "-fsanitize=address ${CMAKE_CXX_FLAGS}") 
     target_compile_definitions(AsyncTask PUBLIC DEBUG)
 endif()
 
-option(AsyncTask_BUILD_EXAMPLES "Build examples" OFF)
+option(AsyncTask_BUILD_EXAMPLES "Build examples" ON)
 option(AsyncTask_BUILD_TESTS "Build tests" OFF)
 
 if(AsyncTask_BUILD_EXAMPLES)

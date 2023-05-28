@@ -111,7 +111,6 @@ static timespec ns_to_timespec(std::optional<std::chrono::nanoseconds>& ns)
     ts.tv_sec = 0;
     ts.tv_nsec = 0;
   }
-  std::cout << "ts: " << ts.tv_sec << " " << ts.tv_nsec << "\n";
   return ts;
 }
 

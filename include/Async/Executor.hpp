@@ -351,6 +351,7 @@ public:
   {
     return mBlockingExecutor.blockSpawn(std::forward<Args>(args)...);
   }
+  auto execute(std::coroutine_handle<> handle) { mPool.execute(handle); }
 
 private:
   BlockingExecutor<MultiThreadExecutor> mBlockingExecutor;
