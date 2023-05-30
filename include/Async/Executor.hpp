@@ -15,6 +15,10 @@
 #include <thread>
 
 namespace async {
+#ifdef AsyncTask_GLOBAL_EXECUTOR
+auto GetReactor() -> Reactor&;
+auto GetExecutor() -> ExecutorCpt auto&;
+#endif
 class BlockingThreadPool {
 public:
   BlockingThreadPool(size_t threadLimit) : mIdleCount(0), mThreadCount(0), mThreadLimits(threadLimit) {}
@@ -274,6 +278,7 @@ private:
 class MultiThreadExecutor {
 public:
   MultiThreadExecutor(size_t n) : mPool(n) {}
+#ifndef AsyncTask_GLOBAL_EXECUTOR
   auto spawnDetach(Task<> in, Reactor& reactor) -> void
   {
     mSpawnCount.fetch_add(1, std::memory_order_acquire);
@@ -285,7 +290,6 @@ public:
         -> DetachTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(afterDoneFn).handle;
     mPool.execute(handle);
   }
-
   template <typename T>
   [[nodiscard]] auto block(Task<T> in, Reactor& reactor) -> T
   {
@@ -323,6 +327,56 @@ public:
     }
     return future.get();
   }
+#else
+  auto spawnDetach(Task<> in) -> void
+  {
+    mSpawnCount.fetch_add(1, std::memory_order_acquire);
+    auto afterDoneFn = [this]() {
+      mSpawnCount.fetch_sub(1, std::memory_order_release);
+      GetReactor().notify();
+    };
+    auto handle = [](Task<> task)
+        -> DetachTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(afterDoneFn).handle;
+    mPool.execute(handle);
+  }
+  template <typename T>
+  [[nodiscard]] auto block(Task<T> in) -> T
+  {
+    auto promise = std::make_shared<std::promise<T>>();
+    auto future = promise->get_future();
+
+    if constexpr (std::is_void_v<T>) { // return void
+      auto afterDoneFn = [this, promise]() {
+        promise->set_value();
+        GetReactor().notify();
+      };
+      auto handle = [](Task<T> task)
+          -> DetachTask<T> { co_return co_await task; }(std::move(in)).afterDestroy(std::move(afterDoneFn)).handle;
+      mPool.execute(handle);
+    } else {
+      auto afterDoneFn = [promise](auto&& value) {
+        promise->set_value(std::forward<T>(value));
+        GetReactor().notify();
+      };
+      auto newTask = [](Task<T> task) -> DetachTask<T> {
+        auto value = co_await task;
+        co_return value;
+      }(std::move(in));
+      mPool.execute(newTask.afterDestroy(std::move(afterDoneFn)).handle);
+    }
+
+    using namespace std::chrono_literals;
+    while (true) {
+      if (future.wait_for(0s) == std::future_status::ready) {
+        if (mSpawnCount.load(std::memory_order_acquire) == 0) {
+          break;
+        }
+      }
+      GetReactor().lock().react(std::nullopt, mPool);
+    }
+    return future.get();
+  }
+#endif
 
   template <typename... Args>
   auto blockSpawn(Args&&... args)
@@ -341,6 +395,8 @@ private:
 class InlineExecutor {
 public:
   InlineExecutor() : mQueue(), mSpawnCount(0) {}
+
+#ifndef AsyncTask_GLOBAL_EXECUTOR
   auto spawnDetach(Task<> task, Reactor& reactor) -> void
   {
     mSpawnCount += 1;
@@ -405,6 +461,72 @@ public:
       reactor.lock().react(std::nullopt, *this);
     }
   }
+#else
+  auto spawnDetach(Task<> task) -> void
+  {
+    mSpawnCount += 1;
+    auto afterDestroyFn = [this]() {
+      mSpawnCount -= 1;
+      GetReactor().notify();
+    };
+    auto handle = [](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
+                                         .afterDestroy(std::move(afterDestroyFn))
+                                         .handle;
+    mQueue.push(handle);
+  }
+
+  template <typename T>
+    requires(not std::is_void_v<T>)
+  auto block(Task<T> task) -> T
+  {
+    auto returnValue = std::optional<T>(std::nullopt);
+    auto afterDestroyFn = [ &returnValue](T&& value) {
+      returnValue.emplace(std::move(value));
+      GetReactor().notify();
+    };
+    auto handle = [this](Task<T> task)
+        -> DetachTask<T> { co_return co_await task; }(std::move(task)).afterDestroy(std::move(afterDestroyFn)).handle;
+    handle.resume();
+
+    while (true) {
+      while (!mQueue.empty()) {
+        auto handle = mQueue.front();
+        mQueue.pop();
+        handle.resume();
+      }
+      if (mSpawnCount == 0 && returnValue.has_value() && mQueue.empty()) {
+        break;
+      }
+      GetReactor().lock().react(std::nullopt, *this);
+    }
+
+    return std::move(returnValue.value());
+  }
+  auto block(Task<> task) -> void
+  {
+    auto hasValue = false;
+    auto afterDestroyFn = [&hasValue]() {
+      hasValue = true;
+      GetReactor().notify();
+    };
+    auto handle = [](Task<> task) -> DetachTask<void> { co_return co_await task; }(std::move(task))
+                                         .afterDestroy(std::move(afterDestroyFn))
+                                         .handle;
+    handle.resume();
+
+    while (true) {
+      while (!mQueue.empty()) {
+        auto handle = mQueue.front();
+        mQueue.pop();
+        handle.resume();
+      }
+      if (mSpawnCount == 0 && hasValue && mQueue.empty()) {
+        break;
+      }
+      GetReactor().lock().react(std::nullopt, *this);
+    }
+  }
+#endif
 
   template <typename... Args>
   [[nodiscard]] auto blockSpawn(Args&&... args)
@@ -419,4 +541,5 @@ private:
   std::queue<std::coroutine_handle<>> mQueue;
   size_t mSpawnCount;
 };
+
 } // namespace async

@@ -2,10 +2,8 @@
 #include <concepts>
 #include <coroutine>
 namespace async {
+class MultiThreadExecutor;
+class InlineExecutor;
 template <typename T>
-concept ExecutorCpt = requires(T&& executor) {
-                        {
-                          executor.execute(std::declval<std::coroutine_handle<>>())
-                          } -> std::same_as<void>;
-                      };
-}
+concept ExecutorCpt = std::is_same_v<MultiThreadExecutor, T> || std::is_same_v<InlineExecutor, T>;
+} // namespace async
