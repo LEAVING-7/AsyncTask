@@ -4,17 +4,24 @@ project(AsyncTask VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 if(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
-  set(CMAKE_CXX_FLAGS "-fcolor-diagnostics ${CMAKE_CXX_FLAGS}")
+  set(CMAKE_CXX_FLAGS "-Wall -fcolor-diagnostics ${CMAKE_CXX_FLAGS}")
+endif()
+
+if(${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
+  set(CMAKE_CXX_FLAGS "-lstdc++ -g -lm -Wall -fdiagnostics-color=always ${CMAKE_CXX_FLAGS}")
 endif()
 
 include(FetchContent)
 macro(AddExternal target url git_tag)
+  if(NOT DEFINED GLOBAL_GITHUB_ADDRESS)
+    set(GLOBAL_GITHUB_ADDRESS "https://github.com")
+  endif()
   FetchContent_Declare(
     ${target}
-    GIT_REPOSITORY https://github.com/${url}
+    GIT_REPOSITORY "${GLOBAL_GITHUB_ADDRESS}/${url}"
     GIT_TAG ${git_tag}
   )
-  FetchContent_MakeAvailable(${target})
+FetchContent_MakeAvailable(${target})
 endmacro()
 
 file(GLOB AsyncTask_SOURCE 

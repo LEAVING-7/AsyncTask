@@ -267,97 +267,65 @@ auto Steal(Queue<T>& src, Queue<T>& dst) -> bool
   return true;
 }
 } // namespace async::spmc
+
 #include <condition_variable>
 #include <mutex>
 #include <queue>
 namespace async::mpmc {
-template <typename T>
+template <typename Lock>
+concept is_lockable = requires(Lock&& lock) {
+                        lock.lock();
+                        lock.unlock();
+                        {
+                          lock.try_lock()
+                          } -> std::convertible_to<bool>;
+                      };
+
+template <typename T, typename Lock = std::mutex>
+  requires is_lockable<Lock>
 class Queue {
 public:
+  using value_type = T;
+  using size_type = typename std::deque<T>::size_type;
+
   Queue() = default;
-  void push(T&& item)
+  
+  void push(T&& value)
   {
-    {
-      auto lk = std::scoped_lock(mMutex);
-      mQueue.push(std::move(item));
-    }
-    mCond.notify_one();
-  }
-  auto tryPush(T const& item) -> bool
-  {
-    {
-      auto lk = std::unique_lock(mMutex, std::try_to_lock);
-      if (!lk) {
-        return false;
-      }
-      mQueue.push(item);
-    }
-    mCond.notify_one();
-    return true;
+    std::lock_guard lock(mMutex);
+    mData.push_back(std::forward<T>(value));
   }
 
-  auto pop(T& item) -> bool
+  [[nodiscard]] bool empty() const
   {
-    auto lk = std::unique_lock(mMutex);
-    mCond.wait(lk, [this] { return !mQueue.empty() || mStop; });
-    if (mStop && mQueue.empty()) {
-      return false;
+    std::lock_guard lock(mMutex);
+    return mData.empty();
+  }
+
+  [[nodiscard]] std::optional<T> pop()
+  {
+    std::lock_guard lock(mMutex);
+    if (mData.empty()) {
+      return std::nullopt;
     }
-    item = std::move(mQueue.front());
-    mQueue.pop();
-    return true;
+    auto front = std::move(mData.front());
+    mData.pop_front();
+    return front;
   }
-  auto tryPop(T& item) -> bool
+
+  [[nodiscard]] std::optional<T> steal()
   {
-    auto lk = std::unique_lock(mMutex, std::try_to_lock);
-    if (!lk || mQueue.empty()) {
-      return false;
+    std::lock_guard lock(mMutex);
+    if (mData.empty()) {
+      return std::nullopt;
     }
-    item = std::move(mQueue.front());
-    mQueue.pop();
-    return true;
-  }
-  auto tryPopIf(T& item, bool (&pred)(T&) = nullptr)
-  {
-    auto lk = std::unique_lock(mMutex, std::try_to_lock);
-    if (!lk || mQueue.empty()) {
-      return false;
-    }
-    if (pred && !pred(mQueue.front())) {
-      return false;
-    }
-    item = std::move(mQueue.front());
-    mQueue.pop();
-    return true;
-  }
-  auto size() const -> size_t
-  {
-    auto lk = std::scoped_lock(mMutex);
-    return mQueue.size();
-  }
-  auto empty() const -> bool
-  {
-    auto lk = std::scoped_lock(mMutex);
-    return mQueue.empty();
-  }
-  auto stop() -> void
-  {
-    {
-      auto lk = std::scoped_lock(mMutex);
-      mStop = true;
-    }
-    mCond.notify_all();
-  }
-  auto waitEmpty() -> void
-  {
-    auto lk = std::unique_lock(mMutex);
-    mCond.wait(lk, [this] { return mQueue.empty(); });
+    auto back = std::move(mData.back());
+    mData.pop_back();
+    return back;
   }
 
 private:
-  std::queue<T> mQueue;
-  bool mStop = false;
-  mutable std::mutex mMutex;
-  std::condition_variable mCond;
+  std::deque<T> mData {};
+  mutable Lock mMutex {};
 };
 } // namespace async::mpmc

@@ -1,53 +1,58 @@
 #pragma once
-
 #include "Task.hpp"
-#include <atomic>
+#include "ThreadSafe.hpp"
+#include "concepts.hpp"
 #include <cassert>
-#include <mutex>
+#include <list>
 namespace async {
-template <typename ExecutorType>
+namespace detail {
+template <typename PrimitiveTy>
+struct PendingAwaiter {
+  PrimitiveTy& mThis;
+  auto await_ready() const noexcept { return false; }
+  auto await_suspend(std::coroutine_handle<> h) noexcept { mThis.mPending.push(std::move(h)); }
+  auto await_resume() const noexcept {}
+};
+} // namespace detail
+
+template <typename ExecutorTy>
 class Mutex {
 public:
-  Mutex(ExecutorType& e) : mPool(e) {};
+  Mutex(ExecutorTy& e) : mExecutor(e) {};
   [[nodiscard]] auto lock() -> Task<void>
   {
-    struct Awaiter {
-      Mutex& mThis;
-      auto await_ready() const noexcept { return false; }
-      auto await_suspend(std::coroutine_handle<> h) noexcept
-      {
-        auto lk = std::scoped_lock(mThis.mHandlesMutex);
-        mThis.mHandles.push_back(h);
-      }
-      auto await_resume() const noexcept { }
-    };
     bool expected = false;
     if (mLocked.compare_exchange_strong(expected, true)) { // locked
       co_return;                                           // held the lock
     } else {
-      co_await Awaiter {*this};
+      co_await detail::PendingAwaiter<Mutex>(*this);
       assert(mLocked.compare_exchange_strong(expected, true));
     }
   }
-  auto unlock()
+  auto unlock() -> void
   {
-    {
-      auto lk = std::scoped_lock(mHandlesMutex);
-      if (!mHandles.empty()) {
-        auto back = mHandles.back();
-        mHandles.pop_back();
-        mPool.execute(back);
-      } else {
-        mLocked = false;
-      }
+    auto value = mPending.pop();
+    if (value.has_value()) {
+      mExecutor.execute(value.value());
+    } else {
+      mLocked = false;
+    }
+  }
+  [[nodiscard]] auto try_lock() -> bool
+  {
+    bool expected = false;
+    if (mLocked.compare_exchange_strong(expected, true)) {
+      return true;
+    } else {
+      return false;
     }
   }
 
 private:
-  ExecutorType& mPool;
-  std::atomic_bool mLocked = false;
-  std::mutex mHandlesMutex;
-  std::vector<std::coroutine_handle<>> mHandles;
+  template <typename T>
+  friend struct detail::PendingAwaiter;
+  mpmc::Queue<std::coroutine_handle<>> mPending; // TODO: use atomic linked list
+  std::atomic<bool> mLocked = false;
+  ExecutorTy& mExecutor;
 };
-
 } // namespace async

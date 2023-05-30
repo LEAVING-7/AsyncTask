@@ -1,8 +1,8 @@
 #pragma once
-#include "Async/Queue.hpp"
 #include "Async/Reactor.hpp"
 #include "Async/Slab.hpp"
 #include "Async/Task.hpp"
+#include "Async/ThreadSafe.hpp"
 #include <cassert>
 #include <concepts>
 #include <deque>
@@ -11,6 +11,7 @@
 #include <random>
 #include <shared_mutex>
 #include <source_location>
+#include <thread>
 
 namespace async {
 class BlockingThreadPool {
@@ -132,7 +133,8 @@ protected:
 
 class ThreadPool {
 public:
-  ThreadPool(size_t threadCount) : mThreadCount(threadCount), mThreads(std::make_unique<std::thread[]>(threadCount))
+  [[deprecated("Much slower than StealingThreadPool")]] ThreadPool(size_t threadCount)
+      : mThreadCount(threadCount), mThreads(std::make_unique<std::thread[]>(threadCount))
   {
     mRunning = true;
     for (size_t i = 0; i < mThreadCount; ++i) {
@@ -198,105 +200,82 @@ private:
   std::unique_ptr<std::thread[]> mThreads = nullptr;
   std::atomic_bool mWaiting = false;
 };
-// TODO not efficient enough
+
 class StealingThreadPool {
 public:
-  StealingThreadPool(size_t threadNum) : mQueues(threadNum), mThreads(), mThreadNum(threadNum), mStop(false)
+  explicit StealingThreadPool(uint32_t const& threadNum) : mGlobalQueue(threadNum)
   {
-    mThreads.reserve(threadNum);
-    for (auto i = 0; i < threadNum; ++i) {
-      mThreads.emplace_back(&StealingThreadPool::worker, this, i);
+    std::size_t currentId = 0;
+    for (std::size_t i = 0; i < threadNum; ++i) {
+      mThreads.emplace_back([&, id = currentId](std::stop_token const& stop_tok) {
+        do {
+          mGlobalQueue[id].signal.acquire();
+          do {
+            while (auto task = mGlobalQueue[id].tasks.pop()) {
+              mPendingTasks.fetch_sub(1, std::memory_order_release);
+              std::invoke(std::move(task.value()));
+            }
+            for (std::size_t j = 1; j < mGlobalQueue.size(); ++j) {
+              const std::size_t index = (id + j) % mGlobalQueue.size();
+              if (auto task = mGlobalQueue[index].tasks.steal()) {
+                mPendingTasks.fetch_sub(1, std::memory_order_release);
+                std::invoke(std::move(task.value()));
+                break;
+              }
+            }
+          } while (mPendingTasks.load(std::memory_order_acquire) > 0);
+        } while (!stop_tok.stop_requested());
+      });
+      ++currentId;
     }
   }
+
   ~StealingThreadPool()
   {
-    mStop.exchange(true);
-    for (auto& queue : mQueues) {
-      queue.stop();
-    }
-    for (auto& thread : mThreads) {
-      thread.join();
+    for (std::size_t i = 0; i < mThreads.size(); ++i) {
+      mThreads[i].request_stop();
+      mGlobalQueue[i].signal.release();
+      mThreads[i].join();
     }
   }
-  auto execute(std::coroutine_handle<> handle) -> void
+  StealingThreadPool(StealingThreadPool const&) = delete;
+  StealingThreadPool& operator=(StealingThreadPool const&) = delete;
+
+  [[nodiscard]] auto size() const { return mThreads.size(); }
+  auto execute(std::coroutine_handle<> h)
   {
-    if (handle == nullptr) {
+    if (h == nullptr) {
       return;
     }
-    if (mStop) {
-      return;
-    }
-    auto r = std::rand() % mThreadNum;
-    for (auto n = r; n < mThreadNum * 2; ++n) {
-      if (mQueues[(n) % mThreadNum].tryPush(handle)) {
-        return;
-      }
-    }
-  }
-  auto pendingSize() const -> size_t
-  {
-    size_t size = 0;
-    for (auto& queue : mQueues) {
-      size += queue.size();
-    }
-    return size;
+    enqueue_task(h);
   }
 
 private:
-  auto worker(size_t id) -> void
+  auto enqueue_task(std::coroutine_handle<> h) -> void
   {
-    auto localData = getLocal();
-    localData.id = id;
-    localData.pool = this;
-    while (true) {
-      auto handle = std::coroutine_handle<>();
-      // steal
-      for (auto n = 0; n < mThreadNum * 2; ++n) {
-        if (mQueues[(id + n) % mThreadNum].tryPop(handle)) {
-          break;
-        }
-      }
-      if (handle == nullptr && !mQueues[id].pop(handle)) {
-        if (mStop.load()) {
-          break;
-        } else {
-          continue;
-        }
-      }
-      if (handle != nullptr) {
-        handle.resume();
-      }
-    }
+    const std::size_t i = mCount++ % mGlobalQueue.size();
+    mPendingTasks.fetch_add(1, std::memory_order_relaxed);
+    mGlobalQueue[i].tasks.push(std::move(h));
+    mGlobalQueue[i].signal.release();
   }
-  struct LocalData {
-    constexpr inline static auto InvalidId = std::numeric_limits<size_t>::max();
-    size_t id {InvalidId};
-    StealingThreadPool* pool {nullptr};
+
+  struct TaskItem {
+    mpmc::Queue<std::coroutine_handle<>> tasks {};
+    std::binary_semaphore signal {0};
   };
-  auto getLocal() const -> LocalData&
-  {
-    static thread_local auto data = LocalData();
-    return data;
-  }
-  auto getCurrentId() const -> size_t
-  {
-    auto data = getLocal();
-    if (data.pool != this) {
-      return data.id;
-    }
-    return LocalData::InvalidId;
-  }
-  std::vector<mpmc::Queue<std::coroutine_handle<>>> mQueues;
-  std::vector<std::thread> mThreads;
-  int32_t mThreadNum;
-  std::atomic_bool mStop;
+
+  std::vector<std::jthread> mThreads;
+  std::deque<TaskItem> mGlobalQueue;
+  std::size_t mCount {};
+  std::atomic_int_fast64_t mPendingTasks {};
 };
+
+// auto GetReactor() -> Reactor&;
 
 class MultiThreadExecutor {
 public:
   MultiThreadExecutor(size_t n) : mPool(n) {}
-
-  auto spawnDetach(Task<> in, async::Reactor& reactor) -> void
+  auto spawnDetach(Task<> in, Reactor& reactor) -> void
   {
     mSpawnCount.fetch_add(1, std::memory_order_acquire);
     auto afterDoneFn = [this, &reactor]() {
@@ -309,7 +288,7 @@ public:
   }
 
   template <typename T>
-  [[nodiscard]] auto block(Task<T> in, async::Reactor& reactor) -> T
+  [[nodiscard]] auto block(Task<T> in, Reactor& reactor ) -> T
   {
     auto promise = std::make_shared<std::promise<T>>();
     auto future = promise->get_future();
@@ -357,13 +336,13 @@ private:
   BlockingExecutor<MultiThreadExecutor> mBlockingExecutor;
 
   std::atomic_size_t mSpawnCount;
-  ThreadPool mPool;
+  StealingThreadPool mPool;
 };
 
 class InlineExecutor {
 public:
   InlineExecutor() : mQueue(), mSpawnCount(0) {}
-  auto spawnDetach(Task<> task, async::Reactor& reactor) -> void
+  auto spawnDetach(Task<> task, Reactor& reactor) -> void
   {
     mSpawnCount += 1;
     auto afterDestroyFn = [this, &reactor]() {
@@ -378,7 +357,7 @@ public:
 
   template <typename T>
     requires(not std::is_void_v<T>)
-  auto block(Task<T> task, async::Reactor& reactor) -> T
+  auto block(Task<T> task, Reactor& reactor) -> T
   {
     auto returnValue = std::optional<T>(std::nullopt);
     auto afterDestroyFn = [&reactor, &returnValue](T&& value) {
@@ -403,7 +382,7 @@ public:
 
     return std::move(returnValue.value());
   }
-  auto block(Task<> task, async::Reactor& reactor) -> void
+  auto block(Task<> task, Reactor& reactor) -> void
   {
     auto hasValue = false;
     auto afterDestroyFn = [&reactor, &hasValue]() {
@@ -424,7 +403,6 @@ public:
       if (mSpawnCount == 0 && hasValue && mQueue.empty()) {
         break;
       }
-      puts("react");
       reactor.lock().react(std::nullopt, *this);
     }
   }

@@ -13,7 +13,7 @@ int main()
   auto static mt = async::Mutex(e);
   e.block(
       []() -> async::Task<> {
-        for (int i = 0; i < 1'000'000; i++) { // 一亿
+        for (int i = 0; i < 1'000'000; i++) { // 1M
           e.spawnDetach(
               [](async::Reactor& r, int i) -> async::Task<> {
                 co_await mt.lock();
@@ -32,6 +32,7 @@ int main()
       r);
   auto done = std::chrono::steady_clock::now();
   std::cout << "time elapse " << std::chrono::duration_cast<std::chrono::milliseconds>(done - now) << '\n';
-  // 20694ms
+  // 20694ms -> 3079ms
+  assert(number == 1'000'000);
   std::cout << number << '\n';
 }

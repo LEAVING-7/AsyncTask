@@ -156,6 +156,9 @@ inline auto Promise<void>::get_return_object() noexcept -> Task<void>
   return Task<void> {std::coroutine_handle<Promise>::from_promise(*this)};
 }
 
+template<typename T = void>
+struct DetachTask;
+
 template <typename T>
 struct DetachTask {
   struct promise_type;
