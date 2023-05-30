@@ -18,7 +18,7 @@ struct PendingAwaiter {
 template <typename ExecutorTy>
 class Mutex {
 public:
-  Mutex(ExecutorTy& e) : mExecutor(e) {};
+  Mutex(ExecutorTy& e = GetExecutor<ExecutorTy>()) : mExecutor(e) {};
   [[nodiscard]] auto lock() -> Task<void>
   {
     bool expected = false;

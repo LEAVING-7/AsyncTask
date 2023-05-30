@@ -3,6 +3,7 @@
 #include "Async/Slab.hpp"
 #include "Async/Task.hpp"
 #include "Async/ThreadSafe.hpp"
+#include "Async/concepts.hpp"
 #include <cassert>
 #include <concepts>
 #include <deque>
@@ -270,8 +271,6 @@ private:
   std::atomic_int_fast64_t mPendingTasks {};
 };
 
-// auto GetReactor() -> Reactor&;
-
 class MultiThreadExecutor {
 public:
   MultiThreadExecutor(size_t n) : mPool(n) {}
@@ -288,7 +287,7 @@ public:
   }
 
   template <typename T>
-  [[nodiscard]] auto block(Task<T> in, Reactor& reactor ) -> T
+  [[nodiscard]] auto block(Task<T> in, Reactor& reactor) -> T
   {
     auto promise = std::make_shared<std::promise<T>>();
     auto future = promise->get_future();
@@ -408,7 +407,7 @@ public:
   }
 
   template <typename... Args>
-  auto blockSpawn(Args&&... args)
+  [[nodiscard]] auto blockSpawn(Args&&... args)
   {
     return mBlockingExecutor.blockSpawn(std::forward<Args>(args)...);
   }
