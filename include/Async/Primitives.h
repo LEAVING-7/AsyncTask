@@ -7,10 +7,9 @@
 #include <list>
 namespace async {
 #ifndef AsyncTask_GLOBAL_EXECUTOR
-template <typename ExecutorTy>
 class Mutex {
 public:
-  Mutex(ExecutorTy& e) : mExecutor(e) {};
+  Mutex(MultiThreadExecutor& e) : mExecutor(e) {};
   [[nodiscard]] auto lock() -> Task<void>
   {
     bool expected = false;
@@ -49,7 +48,7 @@ public:
 private:
   mpmc::Queue<std::coroutine_handle<>> mPending; // TODO: use atomic linked list
   std::atomic<bool> mLocked = false;
-  ExecutorTy& mExecutor;
+  MultiThreadExecutor& mExecutor;
 };
 
 #else
