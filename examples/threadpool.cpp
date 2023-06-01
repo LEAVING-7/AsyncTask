@@ -1,11 +1,10 @@
-#include <atomic>
-std::atomic_size_t gCnt = 0;
+#include "Async/Executor.hpp"
 #include "Async/ThreadSafe.hpp"
+#include <atomic>
 #include <barrier>
 #include <chrono>
 using namespace std::chrono_literals;
-#include "Async/Executor.hpp"
-static auto device = std::random_device {};
+std::atomic_size_t gCnt = 0;
 
 int main()
 {
@@ -30,7 +29,6 @@ int main()
     auto after = std::chrono::steady_clock::now();
     assert(gCnt == 1000);
     std::cout << "time: " << std::chrono::duration_cast<std::chrono::milliseconds>(after - now).count() << "ms\n";
-    puts("fuck me");
   }
   {
     auto now = std::chrono::steady_clock::now();
@@ -53,6 +51,5 @@ int main()
     auto after = std::chrono::steady_clock::now();
     assert(gCnt == 2000);
     std::cout << "time: " << std::chrono::duration_cast<std::chrono::milliseconds>(after - now).count() << "ms\n";
-    puts("fuck me");
   }
 }

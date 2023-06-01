@@ -1,38 +1,32 @@
 #include "Async/Executor.hpp"
-#include "Async/Primitives.h"
+#include "Async/Primitives.hpp"
 #include "Async/Task.hpp"
 using namespace std::chrono_literals;
-
-#include <random>
 int main()
 {
-  auto static e = async::MultiThreadExecutor {4};
-  auto static r = async::Reactor {};
+  using RuntimeTy = async::Runtime<async::MultiThreadExecutor>;
+  RuntimeTy::Init(4);
+
   auto static number = 0;
   auto now = std::chrono::steady_clock::now();
-  auto static mt = async::Mutex(e);
-  e.block(
-      []() -> async::Task<> {
-        for (int i = 0; i < 1'000'000; i++) { // 1M
-          e.spawnDetach(
-              [](async::Reactor& r, int i) -> async::Task<> {
-                co_await mt.lock();
-                number += 1;
-                if (number % 1000 == 0) {
-                  std::cout << number << '\n';
-                }
-                mt.unlock();
-                co_return;
-              }(r, i),
-              r);
+  auto static mt = async::Mutex();
+  RuntimeTy::Block([]() -> async::Task<> {
+    for (int i = 0; i < 1'000'000; i++) { // 1M
+      RuntimeTy::SpawnDetach([](int i) -> async::Task<> {
+        co_await mt.lock();
+        number += 1;
+        if (number % 1000 == 0) {
+          printf("number = %d\n", number);
         }
-        puts("done");
+        mt.unlock();
         co_return;
-      }(),
-      r);
+      }(i));
+    }
+    puts("done");
+    co_return;
+  }());
   auto done = std::chrono::steady_clock::now();
-  std::cout << "time elapse " << std::chrono::duration_cast<std::chrono::milliseconds>(done - now) << '\n';
-  // 20694ms -> 3079ms
+  printf("time elapse %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(done - now).count());
   assert(number == 1'000'000);
   std::cout << number << '\n';
 }

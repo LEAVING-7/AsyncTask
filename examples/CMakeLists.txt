@@ -4,5 +4,5 @@ target_link_libraries(threadpool AsyncTask)
 add_executable(executor executor.cpp)
 target_link_libraries(executor AsyncTask)
 
-add_executable(primitive primitive.cpp)
-target_link_libraries(primitive AsyncTask)
+add_executable(condvar condvar.cpp)
+target_link_libraries(condvar AsyncTask)
