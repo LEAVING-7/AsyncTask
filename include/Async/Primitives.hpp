@@ -22,7 +22,8 @@ public:
         auto await_resume() const noexcept {}
       };
       co_await PendingAwaiter {*this};
-      assert(mLocked.compare_exchange_strong(expected, true));
+      auto success = mLocked.compare_exchange_strong(expected, true)
+      assert(success);
     }
   }
   auto unlock() -> void
