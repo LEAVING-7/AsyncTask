@@ -276,4 +276,85 @@ struct ContinueTask {
   };
   coroutine_handle_type handle {nullptr};
 };
+
+template<typename T = void>
+struct AfterDestroy;
+
+template <typename T>
+struct AfterDestroy {
+  struct promise_type;
+  using coroutine_handle_type = std::coroutine_handle<promise_type>;
+
+  struct FinalAwaiter {
+    auto await_ready() noexcept -> bool { return false; }
+    auto await_resume() noexcept -> void {}
+    auto await_suspend(std::coroutine_handle<promise_type> handle) noexcept -> void
+    {
+      auto fn = std::move(handle.promise().afterCleanUpFn);
+      auto value = std::move(handle.promise().value);
+      assert(handle.done());
+      handle.destroy();
+      if (fn) {
+        fn(std::move(value));
+      }
+    }
+  };
+
+  struct promise_type {
+    std::exception_ptr exceptionPtr;
+    T value;
+    std::function<void(T&&)> afterCleanUpFn {nullptr};
+
+    auto get_return_object() -> AfterDestroy { return AfterDestroy {coroutine_handle_type::from_promise(*this)}; }
+    auto initial_suspend() noexcept -> std::suspend_always { return {}; }
+    auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
+    auto return_value(T in) -> void { value = std::move(in); }
+    auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
+  };
+  explicit AfterDestroy(coroutine_handle_type in) : handle(in) {}
+  auto afterDestroy(std::function<void(T&&)>&& fn) -> AfterDestroy
+  {
+    handle.promise().afterCleanUpFn = std::move(fn);
+    return *this;
+  };
+  coroutine_handle_type handle {nullptr};
+};
+
+template <>
+struct AfterDestroy<void> {
+  struct promise_type;
+  using coroutine_handle_type = std::coroutine_handle<promise_type>;
+
+  struct FinalAwaiter {
+    auto await_ready() noexcept -> bool { return false; }
+    auto await_resume() noexcept -> void {}
+    auto await_suspend(std::coroutine_handle<promise_type> handle) noexcept -> void
+    {
+      auto fn = std::move(handle.promise().afterCleanUpFn);
+      assert(handle.done());
+      handle.destroy();
+      if (fn) {
+        fn();
+      }
+    }
+  };
+
+  struct promise_type {
+    std::exception_ptr exceptionPtr;
+    std::function<void(void)> afterCleanUpFn {nullptr};
+
+    auto get_return_object() -> AfterDestroy { return AfterDestroy {coroutine_handle_type::from_promise(*this)}; }
+    auto initial_suspend() noexcept -> std::suspend_always { return {}; }
+    auto final_suspend() noexcept -> FinalAwaiter { return FinalAwaiter {}; }
+    auto return_void() -> void {}
+    auto unhandled_exception() noexcept -> void { exceptionPtr = std::current_exception(); }
+  };
+  explicit AfterDestroy(coroutine_handle_type in) : handle(in) {}
+  auto afterDestroy(std::function<void(void)>&& fn) -> AfterDestroy
+  {
+    handle.promise().afterCleanUpFn = std::move(fn);
+    return *this;
+  };
+  coroutine_handle_type handle {nullptr};
+};
 } // namespace async

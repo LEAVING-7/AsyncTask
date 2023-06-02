@@ -1,9 +1,9 @@
 #pragma once
-#include "Reactor.hpp"
-#include "Runtime.hpp"
-#include "Slab.hpp"
-#include "ThreadPool.hpp"
-#include "concepts.hpp"
+#include "Async/Reactor.hpp"
+#include "Async/Runtime.hpp"
+#include "Async/Slab.hpp"
+#include "Async/ThreadPool.hpp"
+#include "Async/concepts.hpp"
 #include <future>
 namespace async {
 
@@ -62,6 +62,40 @@ protected:
   std::unique_ptr<BlockingThreadPool> mBlockingPool {nullptr};
 };
 
+struct JoinHandle {
+  std::atomic<void*> handle = 0; // 0 : not done, 1 : done, else : handle
+  Task<> spawnHandle;
+  JoinHandle(Task<> in) : spawnHandle(std::move(in)) {}
+  [[nodiscard]] auto join()
+  {
+    struct JoinAwaiter {
+      JoinHandle& handle;
+      auto await_ready()
+      {
+        if (handle.handle.load() == reinterpret_cast<void*>(0)) {
+          return false;
+        }
+        if (handle.handle.load() == reinterpret_cast<void*>(1)) {
+          return true;
+        }
+        assert(0);
+      }
+      auto await_suspend(std::coroutine_handle<> in) -> bool
+      {
+        auto expected = reinterpret_cast<void*>(0);
+        if (handle.handle.compare_exchange_strong(expected, in.address())) {
+          return true; // pending and set handle address
+        } else {
+          assert(handle.handle.load() == reinterpret_cast<void*>(1));
+          return false; // already done
+        }
+      }
+      auto await_resume() -> void {}
+    };
+    return JoinAwaiter {*this};
+  }
+};
+
 class MultiThreadExecutor {
 public:
   MultiThreadExecutor(size_t n) : mPool(n) {}
@@ -75,6 +109,19 @@ public:
     };
     auto handle = [](Task<> task)
         -> DetachTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(afterDoneFn).handle;
+    mPool.execute(handle);
+  }
+
+  auto spawn(JoinHandle& join) -> void
+  {
+    auto afterDoneFn = [this, &join]() {
+      auto expected = reinterpret_cast<void*>(0);
+      if (!join.handle.compare_exchange_strong(expected, reinterpret_cast<void*>(1))) {
+        execute(std::coroutine_handle<>::from_address(join.handle.load()));
+      }
+    };
+    auto handle = [](Task<> task)
+        -> DetachTask<> { co_return co_await task; }(std::move(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
     mPool.execute(handle);
   }
   template <typename T>
@@ -144,6 +191,19 @@ public:
                                          .afterDestroy(std::move(afterDestroyFn))
                                          .handle;
     mQueue.push(handle);
+  }
+
+  auto spawn(JoinHandle& join) -> void
+  {
+    auto afterDoneFn = [this, &join]() {
+      auto expected = reinterpret_cast<void*>(0);
+      if (!join.handle.compare_exchange_strong(expected, reinterpret_cast<void*>(1))) {
+        execute(std::coroutine_handle<>::from_address(join.handle.load()));
+      }
+    };
+    auto handle = [](Task<> task)
+        -> DetachTask<> { co_return co_await task; }(std::move(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
+    execute(handle);
   }
 
   template <typename T>

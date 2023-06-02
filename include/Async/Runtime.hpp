@@ -1,14 +1,14 @@
 #pragma once
-#include "Executor.hpp"
-#include "Task.hpp"
-#include "concepts.hpp"
+#include "Async/Executor.hpp"
+#include "Async/Task.hpp"
+#include "Async/concepts.hpp"
 #include <cassert>
 #include <coroutine>
 #include <memory>
 #include <mutex>
 namespace async {
 class Reactor;
-
+struct JoinHandle;
 template <ExecutorCpt ExecutorTy>
 struct Runtime {
   template <typename... Args>
@@ -42,7 +42,8 @@ struct Runtime {
   {
     return GetExecutor().block(std::move(task));
   }
-  static inline auto Sleep(auto duration) -> Task<> { return GetReactor().sleep(duration); }
+  static inline auto Sleep(TimePoint::duration duration) { return GetReactor().sleep(duration); }
+  static inline auto Spawn(JoinHandle& handle) -> void { return GetExecutor().spawn(handle); }
 
 private:
   static inline std::once_flag mOnceFlag;
