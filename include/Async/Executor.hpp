@@ -64,8 +64,9 @@ protected:
 
 struct JoinHandle {
   std::atomic<void*> handle = 0; // 0 : not done, 1 : done, else : handle
-  Task<> spawnHandle;
-  JoinHandle(Task<> in) : spawnHandle(std::move(in)) {}
+  Task<>::coroutine_handle_type const spawnHandle;
+  JoinHandle(Task<> in) : spawnHandle(in.take()) {}
+  auto done() -> bool { return handle.load() == reinterpret_cast<void*>(1) && spawnHandle.done(); }
   [[nodiscard]] auto join()
   {
     struct JoinAwaiter {
@@ -111,7 +112,7 @@ public:
         -> DetachTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(afterDoneFn).handle;
     mPool.execute(handle);
   }
-
+  
   auto spawn(JoinHandle& join) -> void
   {
     auto afterDoneFn = [this, &join]() {
@@ -121,7 +122,7 @@ public:
       }
     };
     auto handle = [](Task<> task)
-        -> DetachTask<> { co_return co_await task; }(std::move(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
+        -> DetachTask<> { co_return co_await task; }(Task(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
     mPool.execute(handle);
   }
   template <typename T>
@@ -202,7 +203,7 @@ public:
       }
     };
     auto handle = [](Task<> task)
-        -> DetachTask<> { co_return co_await task; }(std::move(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
+        -> DetachTask<> { co_return co_await task; }(Task(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
     execute(handle);
   }
 

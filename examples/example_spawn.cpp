@@ -20,10 +20,8 @@ int main()
       puts("t2 end");
     }());
     RuntimeType::Spawn(t2);
-
-    co_await t1.join();
-    puts("t1 joined");
-    co_await t2.join();
-    puts("t2 joined");
+    
+    co_await RuntimeType::WaitAll(t1, t2);
+    puts("every thing done");
   }());
 }

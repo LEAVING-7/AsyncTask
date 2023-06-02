@@ -14,7 +14,7 @@ struct Runtime {
   template <typename... Args>
   static inline auto Init(Args&&... args) -> bool
   {
-    std::call_once(mOnceFlag, [&]() {
+    std::call_once(onceFlag, [&]() {
       reactor = std::make_unique<Reactor>();
       executor = std::make_unique<ExecutorTy>(std::forward<Args>(args)...);
     });
@@ -44,9 +44,14 @@ struct Runtime {
   }
   static inline auto Sleep(TimePoint::duration duration) { return GetReactor().sleep(duration); }
   static inline auto Spawn(JoinHandle& handle) -> void { return GetExecutor().spawn(handle); }
+  template <typename... JoinHandleTy>
+  [[nodiscard]] static inline auto WaitAll(JoinHandleTy&&... handles) -> Task<>
+  {
+    (..., co_await handles.join());
+  }
 
 private:
-  static inline std::once_flag mOnceFlag;
+  static inline std::once_flag onceFlag;
   static inline std::unique_ptr<Reactor> reactor = nullptr;
   static inline std::unique_ptr<ExecutorTy> executor = nullptr;
 };
