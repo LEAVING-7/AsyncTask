@@ -62,9 +62,50 @@ protected:
   std::unique_ptr<BlockingThreadPool> mBlockingPool {nullptr};
 };
 
+template <typename T>
 struct JoinHandle {
   std::atomic<void*> handle = 0; // 0 : not done, 1 : done, else : handle
-  Task<>::coroutine_handle_type const spawnHandle;
+  std::optional<T> result = std::nullopt;
+  typename Task<T>::coroutine_handle_type const spawnHandle;
+
+  JoinHandle(Task<T> in) : spawnHandle(in.take()) {}
+  ~JoinHandle() { assert(handle.load() != reinterpret_cast<void*>(0) && "Handle not joined"); }
+
+  auto done() -> bool { return handle.load() == reinterpret_cast<void*>(1) && spawnHandle.done(); }
+  [[nodiscard]] auto join()
+  {
+    struct JoinAwaiter {
+      JoinHandle& handle;
+      auto await_ready()
+      {
+        if (handle.handle.load() == reinterpret_cast<void*>(0)) {
+          return false;
+        }
+        if (handle.handle.load() == reinterpret_cast<void*>(1)) {
+          return true;
+        }
+        assert(0);
+      }
+      auto await_suspend(std::coroutine_handle<> in) -> bool
+      {
+        auto expected = reinterpret_cast<void*>(0);
+        if (handle.handle.compare_exchange_strong(expected, in.address())) {
+          return true; // pending and set handle address
+        } else {
+          assert(handle.handle.load() == reinterpret_cast<void*>(1));
+          return false; // already done
+        }
+      }
+      auto await_resume() -> T { return std::move(handle.result.value()); }
+    };
+    return JoinAwaiter {*this};
+  }
+};
+
+template <>
+struct JoinHandle<void> {
+  std::atomic<void*> handle = 0; // 0 : not done, 1 : done, else : handle
+  typename Task<>::coroutine_handle_type const spawnHandle;
   JoinHandle(Task<> in) : spawnHandle(in.take()) {}
   auto done() -> bool { return handle.load() == reinterpret_cast<void*>(1) && spawnHandle.done(); }
   [[nodiscard]] auto join()
@@ -112,18 +153,31 @@ public:
         -> DetachTask<void> { co_return co_await task; }(std::move(in)).afterDestroy(afterDoneFn).handle;
     mPool.execute(handle);
   }
-  
-  auto spawn(JoinHandle& join) -> void
+  template <typename T>
+  auto spawn(JoinHandle<T>& join) -> void
   {
-    auto afterDoneFn = [this, &join]() {
-      auto expected = reinterpret_cast<void*>(0);
-      if (!join.handle.compare_exchange_strong(expected, reinterpret_cast<void*>(1))) {
-        execute(std::coroutine_handle<>::from_address(join.handle.load()));
-      }
-    };
-    auto handle = [](Task<> task)
-        -> DetachTask<> { co_return co_await task; }(Task(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
-    mPool.execute(handle);
+    if constexpr (!std::is_void_v<T>) {
+      auto afterDoneFn = [this, &join](auto&& value) {
+        auto expected = reinterpret_cast<void*>(0);
+        if (!join.handle.compare_exchange_strong(expected, reinterpret_cast<void*>(1))) {
+          join.result.emplace(std::forward<T>(value));
+          execute(std::coroutine_handle<>::from_address(join.handle.load()));
+        }
+      };
+      auto handle = [](Task<T> task)
+          -> DetachTask<T> { co_return co_await task; }(Task<T>(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
+      mPool.execute(handle);
+    } else {
+      auto afterDoneFn = [this, &join]() {
+        auto expected = reinterpret_cast<void*>(0);
+        if (!join.handle.compare_exchange_strong(expected, reinterpret_cast<void*>(1))) {
+          execute(std::coroutine_handle<>::from_address(join.handle.load()));
+        }
+      };
+      auto handle = [](Task<T> task)
+          -> DetachTask<T> { co_return co_await task; }(Task<T>(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
+      mPool.execute(handle);
+    }
   }
   template <typename T>
   [[nodiscard]] auto block(Task<T> in) -> T
@@ -138,7 +192,7 @@ public:
       };
       auto handle = [](Task<T> task)
           -> DetachTask<T> { co_return co_await task; }(std::move(in)).afterDestroy(std::move(afterDoneFn)).handle;
-      mPool.execute(handle);
+      execute(handle);
     } else {
       auto afterDoneFn = [promise](auto&& value) {
         promise->set_value(std::forward<T>(value));
@@ -148,7 +202,7 @@ public:
         auto value = co_await task;
         co_return value;
       }(std::move(in));
-      mPool.execute(newTask.afterDestroy(std::move(afterDoneFn)).handle);
+      execute(newTask.afterDestroy(std::move(afterDoneFn)).handle);
     }
 
     using namespace std::chrono_literals;
@@ -194,19 +248,32 @@ public:
     mQueue.push(handle);
   }
 
-  auto spawn(JoinHandle& join) -> void
+  template <typename T>
+  auto spawn(JoinHandle<T>& join) -> void
   {
-    auto afterDoneFn = [this, &join]() {
-      auto expected = reinterpret_cast<void*>(0);
-      if (!join.handle.compare_exchange_strong(expected, reinterpret_cast<void*>(1))) {
-        execute(std::coroutine_handle<>::from_address(join.handle.load()));
-      }
-    };
-    auto handle = [](Task<> task)
-        -> DetachTask<> { co_return co_await task; }(Task(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
-    execute(handle);
+    if constexpr (!std::is_void_v<T>) {
+      auto afterDoneFn = [this, &join](auto&& value) {
+        auto expected = reinterpret_cast<void*>(0);
+        if (!join.handle.compare_exchange_strong(expected, reinterpret_cast<void*>(1))) {
+          join.result.emplace(std::forward<T>(value));
+          execute(std::coroutine_handle<>::from_address(join.handle.load()));
+        }
+      };
+      auto handle = [](Task<T> task)
+          -> DetachTask<T> { co_return co_await task; }(Task<T>(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
+      execute(handle);
+    } else {
+      auto afterDoneFn = [this, &join]() {
+        auto expected = reinterpret_cast<void*>(0);
+        if (!join.handle.compare_exchange_strong(expected, reinterpret_cast<void*>(1))) {
+          execute(std::coroutine_handle<>::from_address(join.handle.load()));
+        }
+      };
+      auto handle = [](Task<T> task)
+          -> DetachTask<T> { co_return co_await task; }(Task<T>(join.spawnHandle)).afterDestroy(afterDoneFn).handle;
+      execute(handle);
+    }
   }
-
   template <typename T>
     requires(not std::is_void_v<T>)
   auto block(Task<T> task) -> T
