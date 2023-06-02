@@ -74,7 +74,7 @@ public:
   auto wait(Events& events, std::optional<std::chrono::nanoseconds> timeout) -> StdResult<void>;
   auto notify() -> StdResult<void>;
 
-  // private:
+private:
   int mEpollFd;
   int mEventFd;
   int mTimerFd;

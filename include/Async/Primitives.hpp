@@ -51,7 +51,7 @@ private:
 class CondVar {
 public:
   CondVar() = default;
-  auto wait() -> Task<void>
+  [[nodiscard]] auto wait() -> Task<void>
   {
     struct PendingAwaiter {
       CondVar& mThis;

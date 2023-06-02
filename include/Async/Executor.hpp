@@ -67,10 +67,8 @@ struct JoinHandle {
   std::atomic<void*> handle = 0; // 0 : not done, 1 : done, else : handle
   std::optional<T> result = std::nullopt;
   typename Task<T>::coroutine_handle_type const spawnHandle;
-
   JoinHandle(Task<T> in) : spawnHandle(in.take()) {}
   ~JoinHandle() { assert(handle.load() != reinterpret_cast<void*>(0) && "Handle not joined"); }
-
   auto done() -> bool { return handle.load() == reinterpret_cast<void*>(1) && spawnHandle.done(); }
   [[nodiscard]] auto join()
   {

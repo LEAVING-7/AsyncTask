@@ -24,8 +24,6 @@ struct Event {
   auto isTimerEvent() -> bool { return key == NOTIFY_KEY && !readable && !writable; }
 };
 
-// static constexpr auto STOP_KEY = NOTIFY_KEY - 1;
-
 enum class PollMode {
   Oneshot,
   Level,
@@ -38,7 +36,9 @@ public:
   Poller() : mEvents(), mEventsLock(), mNotified(false)
   {
     auto r = impl::Poller::Create();
-    assert(r.has_value());
+    if (!r.has_value()) {
+      throw std::system_error(std::make_error_code(r.error()));
+    }
     mPoller = std::move(r.value());
   };
   ~Poller() = default;
@@ -67,7 +67,6 @@ public:
 
   auto wait(std::vector<Event>& events, std::optional<std::chrono::nanoseconds> timeout) -> StdResult<size_t>
   {
-
     auto t = mEventsLock.try_lock();
     if (t) {
       auto r = mPoller.wait(mEvents, timeout);
@@ -98,7 +97,7 @@ public:
     }
   }
 
-  // private:
+private:
   impl::Poller mPoller;
   impl::Events mEvents;
   std::mutex mEventsLock;
