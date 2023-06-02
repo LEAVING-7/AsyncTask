@@ -6,7 +6,6 @@
 #include <map>
 #include <mutex>
 #include <queue>
-#include <source_location>
 #include <span>
 
 namespace async {

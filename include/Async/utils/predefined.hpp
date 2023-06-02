@@ -1,15 +1,8 @@
 #pragma once
 #include <cassert>
 #include <cstdint>
-#include <iostream>
 #include <optional>
 #include <system_error>
-
-#define UNIMPLEMENTED(...)                                                                                             \
-  do {                                                                                                                 \
-    std::cerr << "Unimplemented: " << __FUNCTION__ << std::endl;                                                       \
-    std::terminate();                                                                                                  \
-  } while (0)
 
 #include "expected.hpp"
 #include <system_error>

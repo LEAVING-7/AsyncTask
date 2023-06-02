@@ -90,7 +90,8 @@ struct JoinHandle {
         if (handle.handle.compare_exchange_strong(expected, in.address())) {
           return true; // pending and set handle address
         } else {
-          assert(handle.handle.load() == reinterpret_cast<void*>(1));
+          auto success = handle.handle.load() == reinterpret_cast<void*>(1);
+          assert(success);
           return false; // already done
         }
       }
@@ -126,7 +127,8 @@ struct JoinHandle<void> {
         if (handle.handle.compare_exchange_strong(expected, in.address())) {
           return true; // pending and set handle address
         } else {
-          assert(handle.handle.load() == reinterpret_cast<void*>(1));
+          auto success = handle.handle.load() == reinterpret_cast<void*>(1);
+          assert(success);
           return false; // already done
         }
       }
