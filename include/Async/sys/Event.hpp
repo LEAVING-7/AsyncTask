@@ -24,8 +24,6 @@ struct Event {
   auto isTimerEvent() -> bool { return key == NOTIFY_KEY && !readable && !writable; }
 };
 
-// static constexpr auto STOP_KEY = NOTIFY_KEY - 1;
-
 enum class PollMode {
   Oneshot,
   Level,
@@ -98,7 +96,7 @@ public:
     }
   }
 
-  // private:
+private:
   impl::Poller mPoller;
   impl::Events mEvents;
   std::mutex mEventsLock;

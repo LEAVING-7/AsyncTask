@@ -1,5 +1,4 @@
 #pragma once
-// #include "Async/ConcurrentQueue.hpp"
 #include "Async/Slab.hpp"
 #include "Async/sys/Event.hpp"
 #include <chrono>
@@ -7,7 +6,6 @@
 #include <map>
 #include <mutex>
 #include <queue>
-#include <source_location>
 #include <span>
 
 namespace async {
@@ -162,10 +160,8 @@ public:
   }
   auto removeTimer(TimePoint when, size_t id) -> void
   {
-    {
-      auto lk = std::scoped_lock(mTimerOpLock);
-      mTimerOps.push(TimerOp {TimerOp::Remove {id, when}});
-    }
+    auto lk = std::scoped_lock(mTimerOpLock);
+    mTimerOps.push(TimerOp {TimerOp::Remove {id, when}});
   }
   auto notify() -> void
   {
@@ -356,7 +352,7 @@ inline auto ReactorLock::react(std::optional<TimePoint::duration> timeout, Execu
     for (auto handle : handles) {
       e.execute(handle);
     }
-     return {};
+    return {};
   } else {
     for (auto handle : handles) {
       e.execute(handle);
