@@ -60,5 +60,5 @@ void t2()
 int main()
 {
   async::Runtime<async::MultiThreadExecutor>::Init(4);
-  t2();
+  t1();
 }

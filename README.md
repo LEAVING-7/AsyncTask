@@ -135,11 +135,22 @@ RT::Block([]() -> async::Task<> {
   co_return;
 }());
 ```
+with following output
+```
+$ ./examples/example_condvar
+every thing done
+t2 start
+t2 end
+t1 start
+t3 start
+t3 end
+t1 end
+```
 
 ### Reactor
-usage see: [AsyncIO][reactor.usage]
+usage see: [AsyncIO socket implementation][reactor.usage]
 
-[reactor.usage]: https://github.com/LEAVING-7/AsyncIO
+[reactor.usage]: https://github.com/LEAVING-7/AsyncIO/blob/main/include/Async/sys/Socket.hpp
 [task.note]: https://en.cppreference.com/w/cpp/language/coroutines#Execution
 [badge.license]: https://img.shields.io/github/license/LEAVING-7/AsyncTask
 [badge.language]: https://img.shields.io/badge/language-C%2B%2B20-yellow.svg
