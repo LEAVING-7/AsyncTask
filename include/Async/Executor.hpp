@@ -44,16 +44,16 @@ public:
         auto await_ready() -> bool { return false; }
         auto await_suspend(std::coroutine_handle<> in) -> void
         {
-          auto task = [this](std::invocable auto&& fn) -> ContinueTask {
-            this->result = std::move(fn());
+          auto task = [](std::invocable auto&& fn, Awaiter* awaiter) -> ContinueTask {
+            awaiter->result = fn();
             co_return;
-          }(std::move(fn));
+          }(std::move(fn), this);
           e.execute(task.setContinue(in).handle);
         }
         auto await_resume() -> Result
         {
           assert(result.has_value());
-          return std::move(result.value());
+          return std::move(result).value();
         }
       };
       return Awaiter {*this, std::move(function)};
