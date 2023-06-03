@@ -22,7 +22,7 @@ public:
         auto await_resume() const noexcept {}
       };
       co_await PendingAwaiter {*this};
-      auto success = mLocked.compare_exchange_strong(expected, true)
+      auto success = mLocked.compare_exchange_strong(expected, true);
       assert(success);
     }
   }
