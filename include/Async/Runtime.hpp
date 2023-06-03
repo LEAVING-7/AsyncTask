@@ -38,10 +38,10 @@ struct Runtime {
   }
 
   static inline auto SpawnDetach(Task<> task) -> void { GetExecutor().spawnDetach(std::move(task)); }
-  template <typename T>
-  [[nodiscard]] static inline auto BlockSpawn(Task<T> task) -> T
+  template <typename Fn, typename ...Args>
+  [[nodiscard]] static inline auto BlockSpawn(Fn&& fn, Args&&... args)
   {
-    return GetExecutor().blockSpawn(std::move(task));
+    return GetExecutor().blockSpawn(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
   template <typename T>
   static inline auto Block(Task<T> task) -> T

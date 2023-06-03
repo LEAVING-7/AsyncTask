@@ -9,3 +9,9 @@ target_link_libraries(example_condvar AsyncTask)
 
 add_executable(example_spawn example_spawn.cpp)
 target_link_libraries(example_spawn AsyncTask)
+
+add_executable(example_task example_task.cpp)
+target_link_libraries(example_task AsyncTask)
+
+add_executable(example_executors example_executors.cpp)
+target_link_libraries(example_executors AsyncTask)
