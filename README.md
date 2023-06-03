@@ -20,7 +20,7 @@ The lifetime of external parameters required to create a coroutine must be longe
 see [cppreference][task.note].
 
 ### Task
-async::Task is the basic structure of the entire AsyncTask, which allows you to use co_await expressions on it.
+`async::Task` is the basic structure of the entire AsyncTask, which allows you to use co_await expressions on it.
 ```C++
 #include <Async/Task.hpp>
 #include <cstdio>
@@ -37,9 +37,9 @@ int main()
 }
 ```
 ### Executors
-All Executors support the spawn, spawnDetach, and blockSpawn methods.
+All Executors support the `spawn`, `spawnDetach`, and `blockSpawn` methods.
 #### InlineExecutor
-async::InlineExecutor puts all ready coroutines on the current thread for execution, which means no additional thread synchronization is needed between coroutines, avoiding the overhead of thread switching.
+`async::InlineExecutor` puts all ready coroutines on the current thread for execution, which means no additional thread synchronization is needed between coroutines, avoiding the overhead of thread switching.
 
 
 ```C++
@@ -81,9 +81,9 @@ t2 start
 t2 end
 ```
 #### MultiThreadExecutor
-It is used in the same way as InlineExecutor, but executes tasks on a fixed-size thread pool, so there is additional thread synchronization overhead.
+It is used in the same way as `InlineExecutor`, but executes tasks on a fixed-size thread pool, so there is additional thread synchronization overhead.
 ### Mutex
-async::Mutex uses an atomic variable and an mpmc::Queue to keep track of the state and all coroutines waiting on this mutex.
+`async::Mutex` uses an atomic variable and an `async::mpmc::Queue` to keep track of the state and all coroutines waiting on this mutex.
 
 Note that the outermost Block method will wait for all coroutines created through SpawnDetach, so the following Mutex needs to use shared_ptr to ensure the Mutex keeps alive.
 ```C++
@@ -105,7 +105,7 @@ RT::Block([]() -> Task<> {
 }());
 ```
 ### CondVar
-async::CondVar is similar to async::Mutex. It puts all coroutines waiting on this condition variable into a waiting queue and wakes them up when notify_one or notify_all is called on the condition variable.
+`async::CondVar` is similar to `async::Mutex`. It puts all coroutines waiting on this condition variable into a waiting queue and wakes them up when notify_one or notify_all is called on the condition variable.
 ```C++
 using RT = async::Runtime<async::MultiThreadExecutor>;
 RT::Block([]() -> async::Task<> {
