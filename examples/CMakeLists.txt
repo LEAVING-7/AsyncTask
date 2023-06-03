@@ -1,8 +1,8 @@
 add_executable(example_threadpool example_threadpool.cpp)
 target_link_libraries(example_threadpool AsyncTask)
 
-add_executable(example_executor example_executor.cpp)
-target_link_libraries(example_executor AsyncTask)
+add_executable(example_mutex example_mutex.cpp)
+target_link_libraries(example_mutex AsyncTask)
 
 add_executable(example_condvar example_condvar.cpp)
 target_link_libraries(example_condvar AsyncTask)

@@ -37,7 +37,7 @@ public:
   {
     auto r = impl::Poller::Create();
     if (!r.has_value()) {
-      throw std::system_error(std::make_error_code(r.error()));
+      abort();
     }
     mPoller = std::move(r.value());
   };

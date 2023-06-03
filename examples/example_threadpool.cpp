@@ -12,11 +12,8 @@ int main()
     auto now = std::chrono::steady_clock::now();
     auto pool = async::StealingThreadPool {4};
     std::atomic_uint32_t cnt = {10'00};
-    for (int i = 0; i < 10'00; i++) {
+    for (int i = 0; i < 10'000; i++) {
       pool.execute([&]() -> async::DetachTask<void> {
-        // sleep for random time
-        auto time = 1ms * (rand() % 100);
-        std::this_thread::sleep_for(time);
         gCnt += 1;
         co_return;
       }()
@@ -28,17 +25,14 @@ int main()
     }
     auto after = std::chrono::steady_clock::now();
     assert(gCnt == 1000);
-    std::cout << "time: " << std::chrono::duration_cast<std::chrono::milliseconds>(after - now).count() << "ms\n";
+    printf("time: %ldms\n", std::chrono::duration_cast<std::chrono::milliseconds>(after - now).count());
   }
   {
     auto now = std::chrono::steady_clock::now();
     auto pool = async::ThreadPool {4};
     std::atomic_uint32_t cnt = {10'00};
-    for (int i = 0; i < 10'00; i++) {
+    for (int i = 0; i < 10'000; i++) {
       pool.execute([&]() -> async::DetachTask<void> {
-        // sleep for random time
-        auto time = 1ms * (rand() % 100);
-        std::this_thread::sleep_for(time);
         gCnt += 1;
         co_return;
       }()
@@ -50,6 +44,6 @@ int main()
     }
     auto after = std::chrono::steady_clock::now();
     assert(gCnt == 2000);
-    std::cout << "time: " << std::chrono::duration_cast<std::chrono::milliseconds>(after - now).count() << "ms\n";
+    printf("time: %ldms\n", std::chrono::duration_cast<std::chrono::milliseconds>(after - now).count());
   }
 }

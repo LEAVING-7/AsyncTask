@@ -145,21 +145,21 @@ private:
 
 class StealingThreadPool : public ThreadPoolBase {
 public:
-  explicit StealingThreadPool(uint32_t const& threadNum) : mGlobalQueue(threadNum)
+  explicit StealingThreadPool(uint32_t const& threadNum) : mQueues(threadNum)
   {
     std::size_t currentId = 0;
     for (std::size_t i = 0; i < threadNum; ++i) {
       mThreads.emplace_back([&, id = currentId](std::stop_token const& stop_tok) {
         do {
-          mGlobalQueue[id].signal.acquire();
+          mQueues[id].signal.acquire();
           do {
-            while (auto task = mGlobalQueue[id].tasks.pop()) {
+            while (auto task = mQueues[id].tasks.pop()) {
               mPendingTasks.fetch_sub(1, std::memory_order_release);
               std::invoke(std::move(task.value()));
             }
-            for (std::size_t j = 1; j < mGlobalQueue.size(); ++j) {
-              const std::size_t index = (id + j) % mGlobalQueue.size();
-              if (auto task = mGlobalQueue[index].tasks.steal()) {
+            for (std::size_t j = 1; j < mQueues.size(); ++j) {
+              const std::size_t index = (id + j) % mQueues.size();
+              if (auto task = mQueues[index].tasks.steal()) {
                 mPendingTasks.fetch_sub(1, std::memory_order_release);
                 std::invoke(std::move(task.value()));
                 break;
@@ -176,7 +176,7 @@ public:
   {
     for (std::size_t i = 0; i < mThreads.size(); ++i) {
       mThreads[i].request_stop();
-      mGlobalQueue[i].signal.release();
+      mQueues[i].signal.release();
       mThreads[i].join();
     }
   }
@@ -195,10 +195,10 @@ public:
 private:
   auto enqueue_task(std::coroutine_handle<> h) -> void
   {
-    const std::size_t i = mCount++ % mGlobalQueue.size();
+    const std::size_t i = mCount++ % mQueues.size();
     mPendingTasks.fetch_add(1, std::memory_order_relaxed);
-    mGlobalQueue[i].tasks.push(std::move(h));
-    mGlobalQueue[i].signal.release();
+    mQueues[i].tasks.push(std::move(h));
+    mQueues[i].signal.release();
   }
 
   struct TaskItem {
@@ -207,8 +207,8 @@ private:
   };
 
   std::vector<std::jthread> mThreads;
-  std::deque<TaskItem> mGlobalQueue;
+  std::deque<TaskItem> mQueues;
   std::size_t mCount {};
-  std::atomic_int_fast64_t mPendingTasks {};
+  std::atomic_int64_t mPendingTasks {};
 };
 } // namespace async

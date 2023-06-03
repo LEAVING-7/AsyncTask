@@ -16,13 +16,9 @@ struct Runtime {
   static inline auto Init(Args&&... args) -> bool
   {
     std::call_once(onceFlag, [&]() {
-      try {
-        reactor = std::make_unique<Reactor>();
-        executor = std::make_unique<ExecutorTy>(std::forward<Args>(args)...);
-        isInit.store(true);
-      } catch (...) {
-        isInit.store(false);
-      }
+      reactor = std::make_unique<Reactor>();
+      executor = std::make_unique<ExecutorTy>(std::forward<Args>(args)...);
+      isInit.store(true);
     });
     return true;
   }
@@ -63,7 +59,7 @@ struct Runtime {
   {
     (..., co_await handles.join());
   }
-  
+
 private:
   static inline std::atomic_bool isInit = false;
   static inline std::once_flag onceFlag;
